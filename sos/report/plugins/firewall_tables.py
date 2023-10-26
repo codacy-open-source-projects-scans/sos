@@ -56,7 +56,7 @@ class firewall_tables(Plugin, IndependentPlugin):
         nft_pred = SoSPredicate(self,
                                 kmods=['nf_tables', 'nfnetlink'],
                                 required={'kmods': 'all'})
-        return self.collect_cmd_output("nft list ruleset", pred=nft_pred,
+        return self.collect_cmd_output("nft -a list ruleset", pred=nft_pred,
                                        changes=True)
 
     def setup(self):
@@ -77,7 +77,8 @@ class firewall_tables(Plugin, IndependentPlugin):
         # do collect them only when relevant nft list ruleset exists
         default_ip_tables = "mangle\nfilter\nnat\n"
         try:
-            ip_tables_names = open("/proc/net/ip_tables_names").read()
+            with open('/proc/net/ip_tables_names', 'r') as ifile:
+                ip_tables_names = ifile.read()
         except IOError:
             ip_tables_names = default_ip_tables
         for table in ip_tables_names.splitlines():
@@ -85,7 +86,8 @@ class firewall_tables(Plugin, IndependentPlugin):
                 self.collect_iptable(table)
         # collect the same for ip6tables
         try:
-            ip_tables_names = open("/proc/net/ip6_tables_names").read()
+            with open('/proc/net/ip6_tables_names', 'r') as ipfile:
+                ip_tables_names = ipfile.read()
         except IOError:
             ip_tables_names = default_ip_tables
         for table in ip_tables_names.splitlines():

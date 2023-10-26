@@ -428,6 +428,7 @@ third party.
                          "representative and keep the mapping file private")
 
         self.cleanup()
+        return None
 
     def rebuild_nested_archive(self):
         """Handles repacking the nested tarball, now containing only obfuscated
@@ -525,15 +526,14 @@ third party.
         """
         try:
             hash_size = 1024**2  # Hash 1MiB of content at a time.
-            archive_fp = open(archive_path, 'rb')
-            digest = hashlib.new(self.hash_name)
-            while True:
-                hashdata = archive_fp.read(hash_size)
-                if not hashdata:
-                    break
-                digest.update(hashdata)
-            archive_fp.close()
-            return digest.hexdigest() + '\n'
+            with open(archive_path, 'rb') as archive_fp:
+                digest = hashlib.new(self.hash_name)
+                while True:
+                    hashdata = archive_fp.read(hash_size)
+                    if not hashdata:
+                        break
+                    digest.update(hashdata)
+                return digest.hexdigest() + '\n'
         except Exception as err:
             self.log_debug("Could not generate new checksum: %s" % err)
         return None
@@ -751,7 +751,7 @@ third party.
         """
         if not filename:
             # the requested file doesn't exist in the archive
-            return
+            return None
         subs = 0
         if not short_name:
             short_name = filename.split('/')[-1]

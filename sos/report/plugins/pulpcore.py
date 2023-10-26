@@ -45,34 +45,35 @@ class PulpCore(Plugin, IndependentPlugin):
             return val
 
         try:
-            # split the lines to "one option per line" format
-            for line in open("/etc/pulp/settings.py").read() \
-                    .replace(',', ',\n').replace('{', '{\n') \
-                    .replace('}', '\n}').splitlines():
-                # skip empty lines and lines with comments
-                if not line or line[0] == '#':
-                    continue
-                if line.startswith("DATABASES"):
-                    databases_scope = True
-                    continue
-                # example HOST line to parse:
-                #         'HOST': 'localhost',
-                pattern = r"\s*['|\"]%s['|\"]\s*:\s*\S+"
-                if databases_scope and match(pattern % 'HOST', line):
-                    self.dbhost = separate_value(line)
-                if databases_scope and match(pattern % 'PORT', line):
-                    self.dbport = separate_value(line)
-                if databases_scope and match(pattern % 'NAME', line):
-                    self.dbname = separate_value(line)
-                if databases_scope and match(pattern % 'PASSWORD', line):
-                    self.dbpasswd = separate_value(line)
-                # if line contains closing '}' database_scope end
-                if databases_scope and '}' in line:
-                    databases_scope = False
-                if line.startswith("STATIC_ROOT = "):
-                    self.staticroot = separate_value(line, sep='=')
-                if line.startswith("CHUNKED_UPLOAD_DIR = "):
-                    self.uploaddir = separate_value(line, sep='=')
+            with open("/etc/pulp/settings.py", 'r') as pfile:
+                # split the lines to "one option per line" format
+                for line in pfile.read() \
+                        .replace(',', ',\n').replace('{', '{\n') \
+                        .replace('}', '\n}').splitlines():
+                    # skip empty lines and lines with comments
+                    if not line or line[0] == '#':
+                        continue
+                    if line.startswith("DATABASES"):
+                        databases_scope = True
+                        continue
+                    # example HOST line to parse:
+                    #         'HOST': 'localhost',
+                    pattern = r"\s*['|\"]%s['|\"]\s*:\s*\S+"
+                    if databases_scope and match(pattern % 'HOST', line):
+                        self.dbhost = separate_value(line)
+                    if databases_scope and match(pattern % 'PORT', line):
+                        self.dbport = separate_value(line)
+                    if databases_scope and match(pattern % 'NAME', line):
+                        self.dbname = separate_value(line)
+                    if databases_scope and match(pattern % 'PASSWORD', line):
+                        self.dbpasswd = separate_value(line)
+                    # if line contains closing '}' database_scope end
+                    if databases_scope and '}' in line:
+                        databases_scope = False
+                    if line.startswith("STATIC_ROOT = "):
+                        self.staticroot = separate_value(line, sep='=')
+                    if line.startswith("CHUNKED_UPLOAD_DIR = "):
+                        self.uploaddir = separate_value(line, sep='=')
         except IOError:
             # fallback when the cfg file is not accessible
             pass
@@ -143,29 +144,18 @@ class PulpCore(Plugin, IndependentPlugin):
         return _dbcmd % (self.dbhost, self.dbport, self.dbname, quote(query))
 
     def postproc(self):
-        # TODO obfuscate from /etc/pulp/settings.py :
+        # obfuscate from /etc/pulp/settings.py and "dynaconf list":
         # SECRET_KEY = "eKfeDkTnvss7p5WFqYdGPWxXfHnsbDBx"
         # 'PASSWORD': 'tGrag2DmtLqKLTWTQ6U68f6MAhbqZVQj',
+        # AUTH_LDAP_BIND_PASSWORD = 'ouch-a-secret'
         # the PASSWORD can be also in an one-liner list, so detect its value
         # in non-greedy manner till first ',' or '}'
-        self.do_path_regex_sub(
-            "/etc/pulp/settings.py",
-            r"(SECRET_KEY\s*=\s*)(.*)",
-            r"\1********")
-        self.do_path_regex_sub(
-            "/etc/pulp/settings.py",
-            r"(PASSWORD\S*\s*:\s*)(.*?)(,|\})",
-            r"\1********\3")
-        # apply the same for "dynaconf list" output that prints settings.py
-        # in a pythonic format
-        self.do_cmd_output_sub(
-            "dynaconf list",
-            r"(SECRET_KEY<str>\s*)'(.*)'",
-            r"\1********")
-        self.do_cmd_output_sub(
-            "dynaconf list",
-            r"(PASSWORD\S*\s*:\s*)(.*)",
-            r"\1********")
+        key_pass_re = r"((?:SECRET_KEY|AUTH_LDAP_BIND_PASSWORD)" \
+                      r"(?:\<.+\>)?(\s*=)?|(password|PASSWORD)" \
+                      r"(\"|'|:)+)\s*(\S*)"
+        repl = r"\1 ********"
+        self.do_path_regex_sub("/etc/pulp/settings.py", key_pass_re, repl)
+        self.do_cmd_output_sub("dynaconf list", key_pass_re, repl)
 
 
 # vim: set et ts=4 sw=4 :

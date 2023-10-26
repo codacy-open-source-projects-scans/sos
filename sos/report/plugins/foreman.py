@@ -43,7 +43,9 @@ class Foreman(Plugin):
         self.dbhost = "localhost"
         self.dbpasswd = ""
         try:
-            for line in open("/etc/foreman/database.yml").read().splitlines():
+            with open('/etc/foreman/database.yml', 'r') as dfile:
+                foreman_lines = dfile.read().splitlines()
+            for line in foreman_lines:
                 # skip empty lines and lines with comments
                 if not line or line[0] == '#':
                     continue
@@ -230,6 +232,7 @@ class Foreman(Plugin):
 
         foremandb = {
             'foreman_settings_table': scmd,
+            'foreman_schema_migrations': 'select * from schema_migrations',
             'foreman_auth_table': authcmd,
             'dynflow_schema_info': 'select * from dynflow_schema_info',
             'audits_table_count': 'select count(*) from audits',

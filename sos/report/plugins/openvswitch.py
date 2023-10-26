@@ -102,7 +102,9 @@ class OpenVSwitch(Plugin):
             "dpdk_nic_bind --status",
             "dpdk-devbind.py --status",
             "driverctl list-devices",
+            "driverctl -v list-devices",
             "driverctl list-overrides",
+            "driverctl -v list-overrides",
             # Capture a list of all bond devices
             "ovs-appctl bond/list",
             # Capture more details from bond devices
@@ -153,7 +155,11 @@ class OpenVSwitch(Plugin):
             # Capture miniflow extract implementations
             "ovs-appctl dpif-netdev/miniflow-parser-get",
             # Capture DPDK pmd sleep config
-            "ovs-appctl dpif-netdev/pmd-sleep-show"
+            "ovs-appctl dpif-netdev/pmd-sleep-show",
+            # Capture additional DPDK info
+            "ovs-appctl dpdk/lcore-list",
+            "ovs-appctl dpdk/log-list",
+            "ovs-appctl dpdk/get-malloc-stats"
         ])
         # Capture DPDK and other parameters
         self.add_cmd_output("ovs-vsctl -t 5 get Open_vSwitch . other_config",

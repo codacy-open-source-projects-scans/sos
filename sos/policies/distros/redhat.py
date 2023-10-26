@@ -19,6 +19,8 @@ from sos.presets.redhat import (RHEL_PRESETS, ATOMIC_PRESETS, RHV, RHEL,
                                 ATOMIC)
 from sos.policies.distros import LinuxPolicy, ENV_HOST_SYSROOT
 from sos.policies.package_managers.rpm import RpmPackageManager
+from sos.policies.package_managers.flatpak import FlatpakPackageManager
+from sos.policies.package_managers import MultiPackageManager
 from sos.utilities import bold
 from sos import _sos as _
 
@@ -57,8 +59,11 @@ class RedHatPolicy(LinuxPolicy):
                                            remote_exec=remote_exec)
         self.usrmove = False
 
-        self.package_manager = RpmPackageManager(chroot=self.sysroot,
-                                                 remote_exec=remote_exec)
+        self.package_manager = MultiPackageManager(
+                primary=RpmPackageManager,
+                fallbacks=[FlatpakPackageManager],
+                chroot=self.sysroot,
+                remote_exec=remote_exec)
 
         self.valid_subclasses += [RedHatPlugin]
 
@@ -466,8 +471,9 @@ support representative.
         if not os.path.exists(host_release):
             return False
         try:
-            for line in open(host_release, "r").read().splitlines():
-                atomic |= ATOMIC_RELEASE_STR in line
+            with open(host_release, 'r') as afile:
+                for line in afile.read().splitlines():
+                    atomic |= ATOMIC_RELEASE_STR in line
         except IOError:
             pass
         return atomic
@@ -551,8 +557,9 @@ support representative.
             return coreos
         host_release = os.environ[ENV_HOST_SYSROOT] + OS_RELEASE
         try:
-            for line in open(host_release, 'r').read().splitlines():
-                coreos |= 'Red Hat Enterprise Linux CoreOS' in line
+            with open(host_release, 'r') as hfile:
+                for line in hfile.read().splitlines():
+                    coreos |= 'Red Hat Enterprise Linux CoreOS' in line
         except IOError:
             pass
         return coreos

@@ -40,6 +40,7 @@ class PowerPC(Plugin, IndependentPlugin):
                 "/proc/version",
                 "/dev/nvram",
                 "/var/lib/lsvpd/",
+                "/var/log/lp_diag.log",
                 "/etc/ct_node_id"
             ])
             self.add_cmd_output([
@@ -72,6 +73,7 @@ class PowerPC(Plugin, IndependentPlugin):
                 "/var/log/drmgr",
                 "/var/log/drmgr.0",
                 "/var/log/hcnmgr",
+                "/var/log/rtas_errd.log",
                 "/var/ct/IBM.DRM.stderr",
                 "/var/ct/IW/log/mc/IBM.DRM/trace*"
             ])
@@ -114,6 +116,9 @@ class PowerPC(Plugin, IndependentPlugin):
                 "/var/log/opal-elog/",
                 "/var/log/opal-prd",
                 "/var/log/opal-prd.log*"
+            ])
+            self.add_cmd_output([
+                "opal-prd --expert-mode run nvdimm_info"
             ])
             if self.path_isdir("/var/log/dump"):
                 self.add_cmd_output("ls -l /var/log/dump")

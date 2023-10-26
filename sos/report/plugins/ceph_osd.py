@@ -1,3 +1,5 @@
+# Copyright (C) 2023 Canonical Ltd., Nikhil Kshirsagar <nkshirsagar@ubuntu.com>
+#
 # This file is part of the sos project: https://github.com/sosreport/sos
 #
 # This copyrighted material is made available to anyone wishing to use,
@@ -35,8 +37,43 @@ class CephOSD(Plugin, RedHatPlugin, UbuntuPlugin):
              '/var/snap/microceph/common/data/osd/*')
 
     def setup(self):
+        directory = ''
         microceph_pkg = self.policy.package_manager.pkg_by_name('microceph')
+        cmds = [
+            # will work pre quincy
+            "dump_reservations",
+            "bluestore bluefs available",
+            # will work quincy onward
+            "bluestore bluefs device info",
+            "bluefs stats",
+            "config diff",
+            "config show",
+            "dump_blocklist",
+            "dump_blocked_ops",
+            "dump_historic_ops_by_duration",
+            "dump_historic_slow_ops",
+            "dump_mempools",
+            "dump_ops_in_flight",
+            "dump_op_pq_state",
+            "dump_osd_network",
+            "dump_pgstate_history",
+            "dump_recovery_reservations",
+            "dump_scrubs",
+            "get_mapped_pools",
+            "dump_watchers",
+            "log dump",
+            "list_devices",
+            "list_unfound",
+            "perf dump",
+            "perf histogram dump",
+            "objecter_requests",
+            "ops",
+            "status",
+            "version",
+        ]
+
         if not microceph_pkg:
+            directory = '/var/run/ceph'
             self.add_file_tags({
                 "/var/log/ceph/(.*/)?ceph-(.*-)?osd.*.log": 'ceph_osd_log',
             })
@@ -63,34 +100,8 @@ class CephOSD(Plugin, RedHatPlugin, UbuntuPlugin):
                 "ceph-volume lvm list"
             ])
 
-            cmds = [
-               "bluestore bluefs available",
-               "config diff",
-               "config show",
-               "dump_blacklist",
-               "dump_blocked_ops",
-               "dump_historic_ops_by_duration",
-               "dump_historic_slow_ops",
-               "dump_mempools",
-               "dump_ops_in_flight",
-               "dump_op_pq_state",
-               "dump_osd_network",
-               "dump_reservations",
-               "dump_watchers",
-               "log dump",
-               "perf dump",
-               "perf histogram dump",
-               "objecter_requests",
-               "ops",
-               "status",
-               "version",
-            ]
-
-            self.add_cmd_output(
-              [f"ceph daemon {i} {c}" for i in self.get_socks() for c in cmds]
-            )
-
         else:
+            directory = '/var/snap/microceph'
             # Only collect microceph files, don't run any commands
             self.add_forbidden_path([
                 "/var/snap/microceph/common/**/*keyring*",
@@ -103,15 +114,21 @@ class CephOSD(Plugin, RedHatPlugin, UbuntuPlugin):
                 "/var/snap/microceph/common/logs/*ceph-osd*.log",
             ])
 
-    def get_socks(self):
+        # common add_cmd_output for ceph and microceph
+        self.add_cmd_output([
+            f"ceph daemon {i} {c}" for i in
+            self.get_socks(directory) for c in cmds]
+        )
+
+    def get_socks(self, directory):
         """
         Find any available admin sockets under /var/run/ceph (or subdirs for
         later versions of Ceph) which can be used for ceph daemon commands
         """
         ceph_sockets = []
-        for rdir, dirs, files in os.walk('/var/run/ceph/'):
+        for rdir, dirs, files in os.walk(directory):
             for file in files:
-                if file.endswith('.asok'):
+                if file.endswith('.asok') and 'osd' in file:
                     ceph_sockets.append(self.path_join(rdir, file))
         return ceph_sockets
 
