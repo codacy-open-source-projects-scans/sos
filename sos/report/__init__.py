@@ -129,6 +129,12 @@ class SoSReport(SoSComponent):
         'upload_method': 'auto',
         'upload_no_ssl_verify': False,
         'upload_protocol': 'auto',
+        'upload_s3_endpoint': None,
+        'upload_s3_region': None,
+        'upload_s3_bucket': None,
+        'upload_s3_access_key': None,
+        'upload_s3_secret_key': None,
+        'upload_s3_object_prefix': None,
         'add_preset': '',
         'del_preset': ''
     }
@@ -312,8 +318,21 @@ class SoSReport(SoSComponent):
         report_grp.add_argument("--upload-no-ssl-verify", default=False,
                                 action='store_true',
                                 help="Disable SSL verification for upload url")
+        report_grp.add_argument("--upload-s3-endpoint", default=None,
+                                help="Endpoint to upload to for S3 bucket")
+        report_grp.add_argument("--upload-s3-region", default=None,
+                                help="Region to upload to for S3 bucket")
+        report_grp.add_argument("--upload-s3-bucket", default=None,
+                                help="Name of the S3 bucket to upload to")
+        report_grp.add_argument("--upload-s3-access-key", default=None,
+                                help="Access key for the S3 bucket")
+        report_grp.add_argument("--upload-s3-secret-key", default=None,
+                                help="Secret key for the S3 bucket")
+        report_grp.add_argument("--upload-s3-object-prefix", default=None,
+                                help="Prefix for the S3 object/key")
         report_grp.add_argument("--upload-protocol", default='auto',
-                                choices=['auto', 'https', 'ftp', 'sftp'],
+                                choices=['auto', 'https', 'ftp', 'sftp',
+                                         's3'],
                                 help="Manually specify the upload protocol")
 
         # Group to make add/del preset exclusive
@@ -1515,6 +1534,8 @@ class SoSReport(SoSComponent):
         self._add_sos_logs()
         if self.manifest is not None:
             self.archive.add_final_manifest_data(self.opts.compression_type)
+        # Hide upload passwords in the log files
+        self._obfuscate_upload_passwords()
         # Now, separately clean the log files that cleaner also wrote to
         if do_clean:
             _dir = os.path.join(self.tmpdir, self.archive._name)
@@ -1670,7 +1691,8 @@ class SoSReport(SoSComponent):
             self.policy.display_results(archive, directory, checksum,
                                         map_file=map_file)
 
-        if self.opts.upload or self.opts.upload_url:
+        if (self.opts.upload or self.opts.upload_url
+                or self.opts.upload_s3_endpoint):
             if not self.opts.build:
                 try:
                     self.policy.upload_archive(archive)
