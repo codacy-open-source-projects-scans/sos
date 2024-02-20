@@ -40,6 +40,9 @@ class Microk8s(Plugin, UbuntuPlugin):
             'status',
             'version'
         ]
+        self.add_copy_spec(
+            "/var/snap/microk8s/current/credentials/client.config"
+        )
 
         self.add_cmd_output([
             f"microk8s {subcmd}" for subcmd in microk8s_subcmds
@@ -48,5 +51,18 @@ class Microk8s(Plugin, UbuntuPlugin):
     def postproc(self):
         rsub = r'(certificate-authority-data:|token:)\s.*'
         self.do_cmd_output_sub("microk8s", rsub, r'\1 "**********"')
+
+        protect_keys = [
+            "certificate-authority-data",
+            "client-certificate-data",
+            "client-key-data",
+        ]
+
+        key_regex = fr'(^\s*({"|".join(protect_keys)})\s*:\s*)(.*)'
+
+        self.do_path_regex_sub(
+            "/var/snap/microk8s/current/credentials/client.config",
+            key_regex, r"\1*********"
+        )
 
 # vim: set et ts=4 sw=4

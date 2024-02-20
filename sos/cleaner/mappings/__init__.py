@@ -25,6 +25,8 @@ class SoSMap():
     # used for filename obfuscations in parser.parse_string_for_keys()
     skip_keys = []
     compile_regexes = True
+    ignore_short_items = False
+    match_full_words_only = False
 
     def __init__(self):
         self.dataset = {}
@@ -36,7 +38,8 @@ class SoSMap():
         """Some items need to be completely ignored, for example link-local or
         loopback addresses should not be obfuscated
         """
-        if not item or item in self.skip_keys or item in self.dataset.values():
+        if not item or item in self.skip_keys or item in self.dataset.values()\
+                or (self.ignore_short_items and len(item) <= 3):
             return True
         for skip in self.ignore_matches:
             if re.match(skip, item, re.I):
@@ -95,7 +98,11 @@ class SoSMap():
         :returns:       A compiled regex pattern for the item
         :rtype:         ``re.Pattern``
         """
-        return re.compile(re.escape(item), re.I)
+        if self.match_full_words_only:
+            item = rf'(?=\b|_|-){re.escape(item)}(?=\b|_|-)'
+        else:
+            item = re.escape(item)
+        return re.compile(item, re.I)
 
     def sanitize_item(self, item):
         """Perform the obfuscation relevant to the item being added to the map.
