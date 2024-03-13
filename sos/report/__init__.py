@@ -88,6 +88,7 @@ class SoSReport(SoSComponent):
         'desc': '',
         'domains': [],
         'disable_parsers': [],
+        'skip_clean_files': [],
         'dry_run': False,
         'estimate_only': False,
         'experimental': False,
@@ -358,6 +359,11 @@ class SoSReport(SoSComponent):
                                  default=[], dest='disable_parsers',
                                  help=('Disable specific parsers, so that '
                                        'those elements are not obfuscated'))
+        cleaner_grp.add_argument('--skip-cleaning-files',
+                                 '--skip-masking-files', action='extend',
+                                 default=[], dest='skip_clean_files',
+                                 help=('List of files to skip/ignore during '
+                                       'cleaning. Globs are supported.'))
         cleaner_grp.add_argument('--keywords', action='extend', default=[],
                                  dest='keywords',
                                  help='List of keywords to obfuscate')
@@ -445,7 +451,8 @@ class SoSReport(SoSComponent):
                 'fibre': self._get_fibre_devs()
             },
             'network': self._get_network_devs(),
-            'namespaced_network': self._get_network_namespace_devices()
+            'namespaced_network': self._get_network_namespace_devices(),
+            'fstype': self._get_devices_by_fstype()
         }
 
     def _check_container_runtime(self):
@@ -679,6 +686,21 @@ class SoSReport(SoSComponent):
                     continue
                 out_ns.append(line.partition(' ')[0])
         return out_ns
+
+    def _get_devices_by_fstype(self):
+        _dev_fstypes = {}
+        _devs = sos_get_command_output("lsblk -snrpo FSTYPE,NAME")
+        if _devs['status'] != 0:
+            return _dev_fstypes
+        for line in (_devs['output'].splitlines()):
+            helper = line.strip().split()
+            if len(helper) == 1:
+                helper.insert(0, 'unknown')
+            if "ext" in helper[0]:
+                helper[0] = 'ext4'
+            _dev_fstypes.setdefault(helper[0], [])
+            _dev_fstypes[helper[0]].append(helper[1])
+        return _dev_fstypes
 
     def get_commons(self):
         return {
