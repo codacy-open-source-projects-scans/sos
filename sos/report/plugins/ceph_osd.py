@@ -16,7 +16,7 @@ from sos.report.plugins import Plugin, RedHatPlugin, UbuntuPlugin
 class CephOSD(Plugin, RedHatPlugin, UbuntuPlugin):
     """
     This plugin is for capturing information from Ceph OSD nodes. While the
-    majority of this plugin should be version agnotics, several collections are
+    majority of this plugin should be version agnostic, several collections are
     dependent upon the version of Ceph installed. Versions that correlate to
     RHCS 4 or RHCS 5 are explicitly handled for differences such as those
     pertaining to log locations on the host filesystem.
@@ -24,7 +24,7 @@ class CephOSD(Plugin, RedHatPlugin, UbuntuPlugin):
     Note that while this plugin will activate based on the presence of Ceph
     containers, commands are run directly on the host as those containers are
     often not configured to successfully run the `ceph` commands collected by
-    this plugin. These commands are majorily `ceph daemon` commands that will
+    this plugin. These commands are majorly `ceph daemon` commands that will
     reference discovered admin sockets under /var/run/ceph.
     """
 
@@ -37,6 +37,7 @@ class CephOSD(Plugin, RedHatPlugin, UbuntuPlugin):
              '/var/snap/microceph/common/data/osd/*')
 
     def setup(self):
+        all_logs = self.get_option("all_logs")
         directory = ''
         microceph_pkg = self.policy.package_manager.pkg_by_name('microceph')
         cmds = [
@@ -103,8 +104,14 @@ class CephOSD(Plugin, RedHatPlugin, UbuntuPlugin):
                 "ceph-volume lvm list"
             ])
 
+            if all_logs:
+                self.add_copy_spec([
+                    "/var/log/ceph/**/ceph-osd*.log*",
+                    "/var/log/ceph/**/ceph-volume*.log*",
+                ])
+
         else:
-            directory = '/var/snap/microceph'
+            directory = '/var/snap/microceph/current/run'
             # Only collect microceph files, don't run any commands
             self.add_forbidden_path([
                 "/var/snap/microceph/common/**/*keyring*",
@@ -116,6 +123,11 @@ class CephOSD(Plugin, RedHatPlugin, UbuntuPlugin):
                 "/var/snap/microceph/common/data/osd/*",
                 "/var/snap/microceph/common/logs/*ceph-osd*.log",
             ])
+
+            if all_logs:
+                self.add_copy_spec([
+                    "/var/snap/microceph/common/logs/*ceph-osd*.log*",
+                ])
 
         # common add_cmd_output for ceph and microceph
         self.add_cmd_output([

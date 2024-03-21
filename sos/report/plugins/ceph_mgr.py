@@ -43,6 +43,7 @@ class CephMGR(Plugin, RedHatPlugin, UbuntuPlugin):
     containers = ('ceph-(.*-)?mgr.*',)
 
     def setup(self):
+        all_logs = self.get_option("all_logs")
         microceph_pkg = self.policy.package_manager.pkg_by_name('microceph')
 
         ceph_mgr_cmds = ([
@@ -106,15 +107,23 @@ class CephMGR(Plugin, RedHatPlugin, UbuntuPlugin):
                 "/etc/ceph/*bindpass*",
             ])
 
+            if not all_logs:
+                self.add_copy_spec([
+                    "/var/log/ceph/**/ceph-mgr*.log",
+                ])
+            else:
+                self.add_copy_spec([
+                    "/var/log/ceph/**/ceph-mgr*.log*",
+                ])
+
             self.add_copy_spec([
-                "/var/log/ceph/**/ceph-mgr*.log",
                 "/var/lib/ceph/**/mgr*",
                 "/var/lib/ceph/**/bootstrap-mgr/",
                 "/run/ceph/**/ceph-mgr*",
             ])
 
         else:
-            directory = '/var/snap/microceph'
+            directory = '/var/snap/microceph/current/run'
             self.add_file_tags({
                 '/var/snap/microceph/common/logs/ceph-mgr.*.log':
                 'ceph_mgr_log',
@@ -124,9 +133,14 @@ class CephMGR(Plugin, RedHatPlugin, UbuntuPlugin):
                 "/var/snap/microceph/common/**/*keyring*",
             ])
 
-            self.add_copy_spec([
-                "/var/snap/microceph/common/logs/ceph-mgr*.log",
-            ])
+            if not all_logs:
+                self.add_copy_spec([
+                    "/var/snap/microceph/common/logs/ceph-mgr*.log",
+                ])
+            else:
+                self.add_copy_spec([
+                    "/var/snap/microceph/common/logs/ceph-mgr*.log*",
+                ])
 
         self.add_cmd_output(
             [f"ceph {cmd}" for cmd in ceph_mgr_cmds])
