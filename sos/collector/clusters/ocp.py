@@ -10,7 +10,7 @@
 
 import os
 
-from pipes import quote
+from shlex import quote
 from sos.collector.clusters import Cluster
 from sos.utilities import is_executable
 
@@ -226,6 +226,8 @@ class ocp(Cluster):
                 try:
                     idx[state] = statline.index(state.upper())
                 except Exception:
+                    # label is not available, which is not fatal for our dict
+                    # construction here
                     pass
             for node in nodelist:
                 _node = node.split()

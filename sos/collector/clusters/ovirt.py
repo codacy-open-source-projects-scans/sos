@@ -10,7 +10,7 @@
 
 import fnmatch
 
-from pipes import quote
+from shlex import quote
 from sos.collector.clusters import Cluster
 
 ENGINE_KEY = '/etc/pki/ovirt-engine/keys/engine_id_rsa'
@@ -148,6 +148,7 @@ class ovirt(Cluster):
                     v = str(line.split('=')[1].replace('"', ''))
                     conf[k] = v
                 except IndexError:
+                    # not a valid line to parse config values from, ignore
                     pass
             return conf
         return False
