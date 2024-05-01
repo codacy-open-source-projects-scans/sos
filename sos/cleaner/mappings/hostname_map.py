@@ -156,7 +156,7 @@ class SoSHostnameMap(SoSMap):
             # try to account for use of '-' in names that include hostnames
             # and don't create new mappings for each of these
             for _existing in sorted(self.dataset.keys(), reverse=True,
-                                    key=lambda x: len(x)):
+                                    key=len):
                 _host_substr = False
                 _test = item.split(_existing)
                 _h = _existing.split('.')
@@ -226,7 +226,7 @@ class SoSHostnameMap(SoSMap):
         if not hostname or hostname in self.skip_keys:
             return hostname
         if hostname not in self.dataset:
-            ob_host = "host%s" % self.host_count
+            ob_host = f"host{self.host_count}"
             self.hosts[hostname] = ob_host
             self.host_count += 1
             self.dataset[hostname] = ob_host
@@ -252,6 +252,6 @@ class SoSHostnameMap(SoSMap):
         """Generate an obfuscated domain for each subdomain name given
         """
         if dname not in self._domains:
-            self._domains[dname] = "obfuscateddomain%s" % self.domain_count
+            self._domains[dname] = f"obfuscateddomain{self.domain_count}"
             self.domain_count += 1
         return self._domains[dname]

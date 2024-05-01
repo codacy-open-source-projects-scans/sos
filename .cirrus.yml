@@ -8,10 +8,11 @@ env:
 
     DEBIAN_NAME: "debian-11"
 
-    UBUNTU_LATEST_NAME: "ubuntu-23.10"
-    UBUNTU_NAME: "ubuntu-22.04"
-    UBUNTU_PRIOR_NAME: "ubuntu-20.04"
-    UBUNTU_PRIOR2_NAME: "ubuntu-18.04"
+    UBUNTU_LATEST_NAME: "ubuntu-24.04"
+    UBUNTU_NAME: "ubuntu-24.04"
+    UBUNTU_PRIOR_NAME: "ubuntu-22.04"
+    UBUNTU_PRIOR2_NAME: "ubuntu-20.04"
+    UBUNTU_PRIOR3_NAME: "ubuntu-18.04"
 
     CENTOS_9_NAME: "centos-stream-9"
     CENTOS_8_NAME: "centos-stream-8"
@@ -30,12 +31,13 @@ env:
     FEDORA_IMAGE_NAME: "fedora-cloud-base-gcp-38-1-6-x86-64"
     FEDORA_PRIOR_IMAGE_NAME: "fedora-cloud-base-gcp-37-1-7-x86-64"
 
-    UBUNTU_DEB_IMAGE_NAME: "ubuntu-minimal-2310-mantic-amd64-v20231030"
-    UBUNTU_LATEST_IMAGE_NAME: "ubuntu-2310-mantic-amd64-v20231031"
-    UBUNTU_IMAGE_NAME: "ubuntu-2204-jammy-v20231030"
-    UBUNTU_PRIOR_IMAGE_NAME: "ubuntu-2004-focal-v20231101"
-    UBUNTU_PRIOR2_IMAGE_NAME: "ubuntu-1804-bionic-v20230605"
-    UBUNTU_SNAP_IMAGE_NAME: "ubuntu-2204-jammy-v20231030"
+    UBUNTU_DEB_IMAGE_NAME: "ubuntu-minimal-2404-noble-amd64-v20240423"
+    UBUNTU_LATEST_IMAGE_NAME: "ubuntu-2404-noble-amd64-v20240423"
+    UBUNTU_IMAGE_NAME: "ubuntu-2404-noble-amd64-v20240423"
+    UBUNTU_PRIOR_IMAGE_NAME: "ubuntu-2204-jammy-v20240319"
+    UBUNTU_PRIOR2_IMAGE_NAME: "ubuntu-2004-focal-v20240307b"
+    UBUNTU_PRIOR3_IMAGE_NAME: "ubuntu-1804-bionic-v20240116a"
+    UBUNTU_SNAP_IMAGE_NAME: "ubuntu-2204-jammy-v20240319"
     UBUNTU_DEVEL_FAMILY_NAME: "ubuntu-2404-lts-amd64"
 
     # Curl-command prefix for downloading task artifacts, simply add the
@@ -148,7 +150,7 @@ deb_build_task:
         apt -y install devscripts equivs python3-pip
         mk-build-deps
         apt -y install ./sosreport-build-deps*.deb
-        pip3 install "avocado-framework<104.0" --break-system-packages
+        pip3 install -r test-requirements.txt --break-system-packages
     main_script: |
         dpkg-buildpackage -b -us -uc -rfakeroot -m --build-by="noreply@canonical.com"
     prep_artifacts_script: mv ../*.deb ./sos_cirrus.deb
@@ -195,25 +197,30 @@ report_stageone_task:
         - env: *fedora
         - env: *fedoraprior
         - env: &ubuntu
+            PKG: "snap"
             PROJECT: ${UBUNTU_PROJECT}
-            BUILD_NAME: ${UBUNTU_NAME}
+            BUILD_NAME: "${UBUNTU_NAME} - ${PKG}"
             VM_IMAGE_NAME: ${UBUNTU_IMAGE_NAME}
-            PKG: "snap"
         - env: &ubuntuprior
+            PKG: "snap"
             PROJECT: ${UBUNTU_PROJECT}
-            BUILD_NAME: ${UBUNTU_PRIOR_NAME}
+            BUILD_NAME: "${UBUNTU_PRIOR_NAME} - ${PKG}"
             VM_IMAGE_NAME: ${UBUNTU_PRIOR_IMAGE_NAME}
-            PKG: "snap"
         - env: &ubuntuprior2
-            PROJECT: ${UBUNTU_PROJECT}
-            BUILD_NAME: ${UBUNTU_PRIOR2_NAME}
-            VM_IMAGE_NAME: ${UBUNTU_PRIOR2_IMAGE_NAME}
             PKG: "snap"
-        - env: &ubuntu-latest
             PROJECT: ${UBUNTU_PROJECT}
-            BUILD_NAME: ${UBUNTU_LATEST_NAME}
-            VM_IMAGE_NAME: ${UBUNTU_LATEST_IMAGE_NAME}
+            BUILD_NAME: "${UBUNTU_PRIOR2_NAME} - ${PKG}"
+            VM_IMAGE_NAME: ${UBUNTU_PRIOR2_IMAGE_NAME}
+        - env: &ubuntuprior3
+            PKG: "snap"
+            PROJECT: ${UBUNTU_PROJECT}
+            BUILD_NAME: "${UBUNTU_PRIOR3_NAME} - ${PKG}"
+            VM_IMAGE_NAME: ${UBUNTU_PRIOR3_IMAGE_NAME}
+        - env: &ubuntu-latest
             PKG: "deb"
+            PROJECT: ${UBUNTU_PROJECT}
+            BUILD_NAME: "${UBUNTU_LATEST_NAME} - ${PKG}"
+            VM_IMAGE_NAME: ${UBUNTU_LATEST_IMAGE_NAME}
     setup_script: &setup |
         if [ $(command -v apt) ]; then
             apt -y purge sosreport
@@ -240,7 +247,7 @@ report_stageone_task:
         fi
         PIP_EXTRA=""
         [[ $(pip3 install --help | grep break-system) ]] && PIP_EXTRA="--break-system-packages"
-        pip3 install "avocado-framework<104.0" ${PIP_EXTRA}
+        pip3 install -r test-requirements.txt ${PIP_EXTRA}
     # run the unittests separately as they require a different PYTHONPATH in
     # order for the imports to work properly under avocado
     unittest_script: &unit_test |
