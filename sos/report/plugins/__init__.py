@@ -478,7 +478,7 @@ class PluginOpt():
 
 
 class Plugin():
-    """This is the base class for sosreport plugins. Plugins should subclass
+    """This is the base class for sos report plugins. Plugins should subclass
     this and set the class variables where applicable.
 
     :param commons:     A set of information that is shared internally so that
@@ -541,6 +541,7 @@ class Plugin():
     cmdtags = {}
     filetags = {}
     option_list = []
+    is_snap = False
 
     # Default predicates
     predicate = None
@@ -580,6 +581,11 @@ class Plugin():
         for opt in self.option_list:
             opt.plugin = self.name()
             self.options[opt.name] = opt
+
+        # Check if any of the packages tuple is a snap
+        self.is_snap = any(
+            self.is_snap_installed(pkg) for pkg in list(self.packages)
+        )
 
         # Initialise the default --dry-run predicate
         self.set_predicate(SoSPredicate(self))
@@ -999,6 +1005,18 @@ class Plugin():
             len(self.policy.package_manager.all_pkgs_by_name(package_name)) > 0
         )
 
+    def is_snap_installed(self, package_name):
+        """Is the snap package $package_name installed?
+
+        :param package_name:    The name of the package to check
+        :type package_name:     ``str``
+
+        :returns: ``True`` if the snap package is installed, else ``False``
+        :rtype: ``bool``
+        """
+        pkg = self.policy.package_manager.pkg_by_name(package_name)
+        return pkg is not None and pkg['pkg_manager'] == 'snap'
+
     def is_service(self, name):
         """Does the service $name exist on the system?
 
@@ -1176,7 +1194,7 @@ class Plugin():
         return self.do_cmd_output_sub(cmd, _certmatch, replace)
 
     def do_cmd_output_sub(self, cmd, regexp, subst):
-        """Apply a regexp substitution to command output archived by sosreport.
+        """Apply a regexp substitution to command output archived by sos
 
         This is used to obfuscate sensitive information captured by command
         output collection via plugins.
@@ -1259,7 +1277,7 @@ class Plugin():
             self.do_file_sub(path, _certmatch, replace)
 
     def do_file_sub(self, srcpath, regexp, subst):
-        """Apply a regexp substitution to a file archived by sosreport.
+        """Apply a regexp substitution to a file archived by sos report.
 
         :param srcpath: Path in the archive where the file can be found
         :type srcpath: ``str``
@@ -2010,6 +2028,45 @@ class Plugin():
             self._log_info(f"added cmd output '{soscmd.cmd}'{user}")
         else:
             self.log_skipped_cmd(soscmd.cmd, pred, changes=soscmd.changes)
+
+    def add_dir_listing(self, paths, tree=False, recursive=False, chroot=True,
+                        env=None, sizelimit=None, pred=None, subdir=None,
+                        tags=[], runas=None, container=None,
+                        suggest_filename=None):
+        """
+        Used as a way to standardize our collections of directory listings,
+        either as an output of `ls` or `tree` depending on if the `tree`
+        parameter is set to `True`.
+
+        This is ultimately a wrapper around `add_cmd_output()` and supports
+        several, but not all, of the options for that method.
+
+        :param paths:   The path(s) to collect a listing for
+        :type paths:     ``str`` or a ``list`` of ``str``s
+
+        :param tree:    Collect output with `tree` instead of `ls`
+        :type tree:     ``bool`` (default: False)
+
+        :param recursive:   Recursively list directory contents with `ls`
+        :type recursive:    ``bool`` (default: False)
+        """
+        if isinstance(paths, str):
+            paths = [paths]
+
+        paths = [p for p in paths if self.path_exists(p)]
+
+        if not tree:
+            options = f"alhZ{'R' if recursive else ''}"
+        else:
+            options = 'lhp'
+
+        for path in paths:
+            self.add_cmd_output(
+                f"{'tree' if tree else 'ls'} -{options} {path}",
+                chroot=chroot, env=env, sizelimit=sizelimit, pred=pred,
+                subdir=subdir, tags=tags, container=container, runas=runas,
+                suggest_filename=suggest_filename
+            )
 
     def add_cmd_output(self, cmds, suggest_filename=None,
                        root_symlink=None, timeout=None, stderr=True,

@@ -51,7 +51,7 @@ class Kernel(Plugin, IndependentPlugin):
         # compat
         self.add_cmd_output("uname -a", root_symlink="uname", tags="uname")
         self.add_cmd_output("lsmod", root_symlink="lsmod", tags="lsmod")
-        self.add_cmd_output("ls -lt /sys/kernel/slab")
+        self.add_dir_listing('/sys/kernel/slab')
 
         try:
             modules = self.listdir(self.sys_module)
@@ -135,6 +135,7 @@ class Kernel(Plugin, IndependentPlugin):
             "/sys/kernel/debug/dynamic_debug/control",
             "/sys/kernel/debug/extfrag/unusable_index",
             "/sys/kernel/debug/extfrag/extfrag_index",
+            "/sys/kernel/debug/hv-balloon",
             clocksource_path + "available_clocksource",
             clocksource_path + "current_clocksource",
             "/proc/pressure/",

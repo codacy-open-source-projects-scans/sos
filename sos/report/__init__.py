@@ -412,7 +412,7 @@ class SoSReport(SoSComponent):
 
         psec = section.add_section(title='How Collections Are Determined')
         psec.add_text(
-            'SoS report performs it\'s collections by way of \'plugins\' that '
+            'SoS report performs its collections by way of \'plugins\' that '
             'individually specify what files to copy and what commands to run.'
             ' Plugins typically map to specific components or software '
             'packages.'
@@ -421,9 +421,9 @@ class SoSReport(SoSComponent):
             'Plugins may specify different collections on different distribu'
             'tions, and some plugins may only be for specific distributions. '
             'Distributions are represented within SoS by \'policies\' and may '
-            'influence how other SoS commands or options function. For example'
-            'policies can alter where the --upload option defaults to or '
-            'functions.'
+            'influence how other SoS commands or options function. For '
+            'example policies can alter where the --upload option defaults '
+            'to or functions.'
         )
 
         ssec = section.add_section(title='See Also')
@@ -444,7 +444,7 @@ class SoSReport(SoSComponent):
         ssec.add_text(helpln)
 
     def print_header(self):
-        print(f"\n{_(f'sosreport (version {__version__})')}\n")
+        print(f"\n{_(f'sos report (version {__version__})')}\n")
 
     def _get_hardware_devices(self):
         self.devices = {
@@ -1273,7 +1273,7 @@ class SoSReport(SoSComponent):
         version file"""
 
         versions = []
-        versions.append(f"sosreport: {__version__}")
+        versions.append(f"sos report: {__version__}")
 
         self.archive.add_string(content="\n".join(versions),
                                 dest='version.txt')

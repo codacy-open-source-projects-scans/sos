@@ -9,20 +9,22 @@
 from sos.report.plugins import Plugin, IndependentPlugin
 
 
-class Snapper(Plugin, IndependentPlugin):
+class Fail2Ban(Plugin, IndependentPlugin):
 
-    short_desc = 'System snapper'
+    short_desc = "Fail2Ban daemon"
 
-    plugin_name = 'snapper'
-    commands = ("snapper",)
+    plugin_name = "fail2ban"
+    profiles = ('security',)
+    packages = ('fail2ban', 'fail2ban-server')
+    servicess = ('fail2ban',)
 
     def setup(self):
 
-        self.add_cmd_output([
-            "snapper --version",
-            "snapper list"
+        self.add_copy_spec([
+            '/etc/fail2ban',
         ])
 
-        self.add_dir_listing('/usr/lib/snapper/')
-
-# vim: set et ts=4 sw=4 :
+        self.add_cmd_output([
+            'fail2ban-client status',
+            'fail2ban-client banned',
+        ])
