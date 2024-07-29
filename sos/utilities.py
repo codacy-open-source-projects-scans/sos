@@ -28,6 +28,8 @@ try:
 except ImportError:
     from pkg_resources import parse_version
 
+log = logging.getLogger('sos')
+
 # try loading magic>=0.4.20 which implements detect_from_filename method
 magic_mod = False
 try:
@@ -35,7 +37,6 @@ try:
     magic.detect_from_filename(__file__)
     magic_mod = True
 except (ImportError, AttributeError):
-    log = logging.getLogger('sos')
     from textwrap import fill
     msg = ("""\
 WARNING: Failed to load 'magic' module version >= 0.4.20 which sos aims to \
@@ -114,7 +115,6 @@ def fileobj(path_or_file, mode='r'):
         try:
             return open(path_or_file, mode)
         except IOError:
-            log = logging.getLogger('sos')
             log.debug(f"fileobj: {path_or_file} could not be opened")
             return closing(io.StringIO())
     else:
@@ -126,14 +126,13 @@ def convert_bytes(bytes_, K=1 << 10, M=1 << 20, G=1 << 30, T=1 << 40):
     fn = float(bytes_)
     if bytes_ >= T:
         return f'{(fn / T):.1fT}'
-    elif bytes_ >= G:
+    if bytes_ >= G:
         return f'{(fn / G):.1fG}'
-    elif bytes_ >= M:
+    if bytes_ >= M:
         return f'{(fn / M):.1fM}'
-    elif bytes_ >= K:
+    if bytes_ >= K:
         return f'{(fn / K):.1fK}'
-    else:
-        return f'{bytes_}'
+    return f'{bytes_}'
 
 
 def file_is_binary(fname):
@@ -327,8 +326,7 @@ def sos_get_command_output(command, timeout=TIMEOUT_DEFAULT, stderr=False,
             _output.close()
         if e.errno == errno.ENOENT:
             return {'status': 127, 'output': "", 'truncated': ''}
-        else:
-            raise e
+        raise e
 
     if p.returncode == 126 or p.returncode == 127:
         stdout = b""
@@ -554,8 +552,7 @@ class AsyncReader(threading.Thread):
             time.sleep(0.01)
         if not self.binary:
             return ''.join(ln.decode('utf-8', 'ignore') for ln in self.deque)
-        else:
-            return b''.join(ln for ln in self.deque)
+        return b''.join(ln for ln in self.deque)
 
     @property
     def is_full(self):
@@ -580,7 +577,7 @@ class ImporterHelper(object):
     def _plugin_name(self, path):
         "Returns the plugin module name given the path"
         base = os.path.basename(path)
-        name, ext = os.path.splitext(base)
+        name, _ = os.path.splitext(base)
         return name
 
     def _get_plugins_from_list(self, list_):

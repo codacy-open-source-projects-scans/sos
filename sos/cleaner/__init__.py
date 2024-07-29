@@ -455,7 +455,7 @@ third party.
             if checksum is not None:
                 dname = f"checksums/{arc_dest}.{self.hash_name}"
                 self.archive.add_string(checksum, dest=dname)
-        for dirn, dirs, files in os.walk(self.nested_archive.extracted_path):
+        for dirn, _, files in os.walk(self.nested_archive.extracted_path):
             for filename in files:
                 fname = os.path.join(dirn, filename)
                 dname = fname.split(self.nested_archive.extracted_path)[-1]
@@ -504,9 +504,8 @@ third party.
         """
         if self.opts.map_file and not self.opts.no_update:
             cleaner_dir = os.path.dirname(self.opts.map_file)
-            """ Attempt to create the directory /etc/sos/cleaner
-            just in case it didn't exist previously
-            """
+            # Attempt to create the directory /etc/sos/cleaner
+            # just in case it didn't exist previously
             try:
                 os.makedirs(cleaner_dir, exist_ok=True)
                 self.write_map_to_file(_map, self.opts.map_file)

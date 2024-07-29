@@ -36,6 +36,7 @@ UBUNTU_DIST = ['Ubuntu', 'debian']
 
 
 def skipIf(cond, message=None):
+    # pylint: disable=unused-argument
     def decorator(function):
         def wrapper(self, *args, **kwargs):
             if callable(cond):
@@ -47,6 +48,7 @@ def skipIf(cond, message=None):
     return decorator
 
 
+# pylint: disable=unused-argument
 def redhat_only(tst):
     def wrapper(func):
         if distro.detect().name not in RH_DIST:
@@ -54,6 +56,7 @@ def redhat_only(tst):
     return wrapper
 
 
+# pylint: disable=unused-argument
 def ubuntu_only(tst):
     def wrapper(func):
         if distro.detect().name not in UBUNTU_DIST:
@@ -394,10 +397,10 @@ class BaseSoSReportTest(BaseSoSTest):
     def encrypted_path(self):
         return self.get_encrypted_path()
 
-    def _decrypt_archive(self, archive):
-        _archive = archive.strip('.gpg')
+    def _decrypt_archive(self, archive_arg):
+        _archive = archive_arg.strip('.gpg')
         cmd = (f"gpg --batch --passphrase {self.encrypt_pass} -o {_archive} "
-               f"--decrypt {archive}")
+               f"--decrypt {archive_arg}")
         try:
             process.run(cmd, timeout=10)
         except Exception as err:
@@ -430,11 +433,10 @@ class BaseSoSReportTest(BaseSoSTest):
             # grep will return an exit code of 1 if no matches are found,
             # which is what we want
             return False
-        else:
-            flist = []
-            for ln in out.stdout.decode('utf-8').splitlines():
-                flist.append(ln.split(self.tmpdir)[-1])
-            return flist
+        flist = []
+        for ln in out.stdout.decode('utf-8').splitlines():
+            flist.append(ln.split(self.tmpdir)[-1])
+        return flist
 
     def get_encrypted_path(self):
         """Since avocado re-instantiates a new object for every test_ method,

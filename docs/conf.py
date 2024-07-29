@@ -21,7 +21,6 @@ import os
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(0, os.path.abspath('..'))
-import sos
 
 
 # -- General configuration ------------------------------------------------
@@ -52,7 +51,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'SoS'
-copyright = '2014, Bryn Reeves'
+project_copyright = '2014, Bryn Reeves'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the

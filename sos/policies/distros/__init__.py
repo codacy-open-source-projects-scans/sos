@@ -269,7 +269,19 @@ class LinuxPolicy(Policy):
             'dm_mod': 'CONFIG_BLK_DEV_DM'
         }
 
-        booted_config = self.join_sysroot(f"/boot/config-{release}")
+        kconfigs = (
+            f"/boot/config-{release}",
+            f"/lib/modules/{release}/config",
+        )
+        for kconfig in kconfigs:
+            kconfig = self.join_sysroot(kconfig)
+            if os.path.exists(kconfig):
+                booted_config = kconfig
+                break
+        else:
+            self.soslog.warning("Unable to find booted kernel config")
+            return
+
         kconfigs = []
         try:
             with open(booted_config, "r") as kfile:
@@ -347,8 +359,6 @@ class LinuxPolicy(Policy):
                 self.ui_log.info('')
             except KeyboardInterrupt:
                 raise
-
-        return
 
     def _configure_low_priority(self):
         """Used to constrain sos to a 'low priority' execution, potentially
@@ -522,9 +532,9 @@ class LinuxPolicy(Policy):
         }
         if self.commons['cmdlineopts'].upload_protocol in prots.keys():
             return prots[self.commons['cmdlineopts'].upload_protocol]
-        elif '://' not in self.upload_url:
+        if '://' not in self.upload_url:
             raise Exception("Must provide protocol in upload URL")
-        prot, url = self.upload_url.split('://')
+        prot, _ = self.upload_url.split('://')
         if prot not in prots.keys():
             raise Exception(f"Unsupported or unrecognized protocol: {prot}")
         return prots[prot]
@@ -754,7 +764,7 @@ class LinuxPolicy(Policy):
         if put_success == 0:
             ret.sendline('bye')
             return True
-        elif put_success == 1:
+        if put_success == 1:
             raise Exception("Timeout expired while uploading")
         elif put_success == 2:
             raise Exception(f"Unknown error during upload: {ret.before}")
@@ -996,6 +1006,7 @@ class LinuxPolicy(Policy):
         """
         return ''
 
+    # pylint: disable=unused-argument
     def create_sos_container(self, image=None, auth=None, force_pull=False):
         """Returns the command that will create the container that will be
         used for running commands inside a container on hosts that require it.
@@ -1045,8 +1056,7 @@ class LinuxPolicy(Policy):
         if self.container_runtime:
             return (f'{self.container_runtime} exec {self.sos_container_name} '
                     f'{cmd}')
-        else:
-            return cmd
+        return cmd
 
 
 class GenericLinuxPolicy(LinuxPolicy):

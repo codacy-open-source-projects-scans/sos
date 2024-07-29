@@ -339,13 +339,13 @@ class FileCacheArchive(Archive):
     def _copy_attributes(self, src, dest):
         # copy file attributes, skip SELinux xattrs for /sys and /proc
         try:
-            stat = os.stat(src)
+            _stat = os.stat(src)
             if src.startswith("/sys/") or src.startswith("/proc/"):
                 shutil.copymode(src, dest)
-                os.utime(dest, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+                os.utime(dest, ns=(_stat.st_atime_ns, _stat.st_mtime_ns))
             else:
                 shutil.copystat(src, dest)
-            os.chown(dest, stat.st_uid, stat.st_gid)
+            os.chown(dest, _stat.st_uid, _stat.st_gid)
         except Exception as e:
             self.log_debug(f"caught '{e}' setting attributes of '{dest}'")
 
@@ -515,8 +515,8 @@ class FileCacheArchive(Archive):
         if 'PC_NAME_MAX' in os.pathconf_names:
             pc_name_max = os.pathconf_names['PC_NAME_MAX']
             return os.pathconf(self._archive_root, pc_name_max)
-        else:
-            return 255
+
+        return 255
 
     def get_tmp_dir(self):
         return self._archive_root
@@ -656,7 +656,7 @@ class FileCacheArchive(Archive):
         r = sos_get_command_output(enc_cmd, timeout=0, env=env)
         if r["status"] == 0:
             return arc_name
-        elif r["status"] == 2:
+        if r["status"] == 2:
             if self.enc_opts["key"]:
                 msg = "Specified key not in keyring"
             else:
@@ -667,8 +667,8 @@ class FileCacheArchive(Archive):
             msg = f"gpg exited with code {r['status']}"
         raise Exception(msg)
 
-    def _build_archive(self, method):
-        pass
+    def _build_archive(self, method):  # pylint: disable=unused-argument
+        return self.name()
 
 
 class TarFileArchive(FileCacheArchive):
@@ -719,18 +719,13 @@ class TarFileArchive(FileCacheArchive):
 
     def get_selinux_context(self, path):
         try:
-            (rc, c) = selinux.getfilecon(path)
+            (_, c) = selinux.getfilecon(path)
             return c
         except Exception:
             return None
 
     def name(self):
         return f"{self._archive_root}.{self._suffix}"
-
-    def name_max(self):
-        # GNU Tar format supports unlimited file name length. Just return
-        # the limit of the underlying FileCacheArchive.
-        return super().name_max()
 
     def _build_archive(self, method):
         if method == 'auto':

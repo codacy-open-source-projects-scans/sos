@@ -37,9 +37,6 @@ disable=
     W0201, # attribute-defined-outside-init
     W0511, # fixme
     ###################### VV things we should fix VV
-    W0613, # unused-argument
-    W0612, # unused-variable
-    R1705, # no-else-return
     W0719, # broad-exception-raised
     W1203, # logging-fstring-interpolation
     W1406, # redundant-u-string-prefix
@@ -49,11 +46,9 @@ disable=
     W0718, # broad-exception-caught
     W0102, # dangerous-default-value
     C0325, # superfluous-parens
-    E1111, # assignment-from-no-return
     R1714, # consider-using-in
     C0206, # consider-using-dict-items
     W0221, # arguments-differ
-    R1711, # useless-return
     R1720, # no-else-raise
     R0205, # useless-object-inheritance
     W3101, # missing-timeout
@@ -66,10 +61,8 @@ disable=
     R1724, # no-else-continue
     R1729, # use-a-generator
     C0117, # unnecessary-negation
-    W0622, # redefined-builtin
     W0212, # protected-access
     R1728, # consider-using-generator
-    R1710, # inconsistent-return-statements
     C1802, # use-implicit-booleaness-not-len
     W0706, # try-except-raise
     C1803, # use-implicit-booleaness-not-comparison
@@ -86,12 +79,9 @@ disable=
     R1718, # consider-using-set-comprehension
     R1721, # unnecessary-comprehension
     R1722, # consider-using-sys-exit
-    W0105, # pointless-string-statement
     W0108, # unnecessary-lambda
     W0222, # signature-differs
     W0223, # abstract-method
-    W0246, # useless-parent-delegation
-    W0621, # redefined-outer-name
     W0640, # cell-var-from-loop
     W1509, # subprocess-popen-preexec-fn
     W4701, # modified-iterating-list
