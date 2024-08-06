@@ -162,9 +162,8 @@ class BaseSoSTest(Test):
                 LOG_UI.error('ERROR:\n' + msg[:8196])
                 if err.result.interrupted:
                     raise Exception("Timeout exceeded, see output above")
-                else:
-                    raise Exception("Command failed, see output above: "
-                                    f"'{err.command.split('bin/')[1]}'")
+                raise Exception("Command failed, see output above: "
+                                f"'{err.command.split('bin/')[1]}'")
         with open(os.path.join(self.tmpdir, 'output'), 'wb') as pfile:
             pickle.dump(self.cmd_output, pfile)
         self.cmd_output.stdout = self.cmd_output.stdout.decode()
@@ -824,9 +823,9 @@ class StageTwoReportTest(BaseSoSReportTest):
         self.end_of_test_case = False
         self.sm = software_manager.manager.SoftwareManager()
 
-        for dist in self.packages:
-            if isinstance(self.packages[dist], str):
-                self.packages[dist] = [self.packages[dist]]
+        for dist, value in self.packages.items():
+            if isinstance(value, str):
+                self.packages[dist] = [value]
 
         keys = self.packages.keys()
         # allow for single declaration of packages for the RH family

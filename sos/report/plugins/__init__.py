@@ -71,7 +71,7 @@ _certmatch = re.compile("----(?:-| )BEGIN.*?----(?:-| )END", re.DOTALL)
 _cert_replace = "-----SCRUBBED"
 
 
-class SoSPredicate(object):
+class SoSPredicate:
     """A class to implement collection predicates.
 
     A predicate gates the collection of data by an sos plugin. For any
@@ -374,7 +374,7 @@ class SoSPredicate(object):
         }
 
 
-class SoSCommand(object):
+class SoSCommand:
     """A class to represent a command to be collected.
 
     A SoSCommand() object is instantiated for each command handed to an
@@ -459,7 +459,7 @@ class PluginOpt():
         if type('') in self.val_type:
             self.value = str(val)
             return
-        if not any([type(val) is _t for _t in self.val_type]):
+        if not any(type(val) is _t for _t in self.val_type):
             valid = []
             for t in self.val_type:
                 if t is None:
@@ -576,7 +576,7 @@ class Plugin():
 
         # add the default plugin opts
         self.options.update(self.get_default_plugin_opts())
-        for popt in self.options:
+        for popt in self.options:  # pylint: disable=consider-using-dict-items
             self.options[popt].plugin = self.name()
         for opt in self.option_list:
             opt.plugin = self.name()
@@ -1389,7 +1389,7 @@ class Plugin():
         self._log_debug(f"normalized link target '{linkdest}' as '{absdest}'")
 
         # skip recursive copying of symlink pointing to itself.
-        if (absdest != srcpath):
+        if absdest != srcpath:
             # this allows for ensuring we collect the host's file when copying
             # a symlink from within a container that is within the set sysroot
             force = (absdest.startswith(self.sysroot) and
@@ -1431,9 +1431,9 @@ class Plugin():
         )
 
     def _is_policy_forbidden_path(self, path):
-        return any([
+        return any(
             fnmatch.fnmatch(path, fp) for fp in self.policy.forbidden_paths
-        ])
+        )
 
     def _is_skipped_path(self, path):
         """Check if the given path matches a user-provided specification to
@@ -1630,11 +1630,11 @@ class Plugin():
         """After file collections have completed, retroactively generate
         manifest entries to apply tags to files copied by generic copyspecs
         """
-        for file_regex in self.filetags:
+        for file_regex, tag in self.filetags.items():
             manifest_data = {
                 'specification': file_regex,
                 'files_copied': [],
-                'tags': self.filetags[file_regex]
+                'tags': tag
             }
             matched_files = []
             for cfile in self.copied_files:
@@ -3521,6 +3521,7 @@ class Plugin():
         namespaces (options originally present in the networking plugin.)
         """
         out_ns = []
+        pattern = None
 
         # Regex initialization outside of for loop
         if ns_pattern:

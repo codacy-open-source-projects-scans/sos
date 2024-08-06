@@ -169,9 +169,9 @@ class SoSCollector(SoSComponent):
         # get the local hostname and addresses to filter from results later
         self.hostname = socket.gethostname()
         try:
-            self.ip_addrs = list(set([
+            self.ip_addrs = list({
                 i[4][0] for i in socket.getaddrinfo(socket.gethostname(), None)
-            ]))
+            })
         except Exception:
             # this is almost always a DNS issue with reverse resolution
             # set a safe fallback and log the issue
@@ -522,9 +522,9 @@ class SoSCollector(SoSComponent):
         section.add_text(
             'The following help sections may be of further interest:\n'
         )
-        for hsec in hsections:
+        for hsec, value in hsections.items():
             section.add_text(
-                f"{' ':>8}{bold(hsec):<40}{hsections[hsec]:<30}",
+                f"{' ':>8}{bold(hsec):<40}{value:<30}",
                 newline=False
             )
 
@@ -596,8 +596,8 @@ class SoSCollector(SoSComponent):
         if self.opts.cluster_options:
             for opt in self.opts.cluster_options:
                 match = False
-                for clust in self.clusters:
-                    for option in self.clusters[clust].options:
+                for clust, value in self.clusters.items():
+                    for option in value.options:
                         if opt.name == option.name and opt.cluster == clust:
                             match = True
                             opt.value = self._validate_option(option, opt)
@@ -658,8 +658,8 @@ class SoSCollector(SoSComponent):
             )
 
         _opts = {}
-        for _cluster in self.clusters:
-            for opt in self.clusters[_cluster].options:
+        for _, value in self.clusters.items():
+            for opt in value.options:
                 if opt.name not in _opts.keys():
                     _opts[opt.name] = opt
                 else:
@@ -1067,7 +1067,7 @@ class SoSCollector(SoSComponent):
         # an open session to it.
         if self.primary is not None and not self.cluster.strict_node_list:
             for n in self.node_list:
-                if n == self.primary.hostname or n == self.opts.primary:
+                if n in (self.primary.hostname, self.opts.primary):
                     self.node_list.remove(n)
         self.node_list = list(set(n for n in self.node_list if n))
         self.log_debug(f'Node list reduced to {self.node_list}')
@@ -1160,7 +1160,7 @@ class SoSCollector(SoSComponent):
         """Print the intro message and prompts for a case ID if one is not
         provided on the command line
         """
-        disclaimer = ("""\
+        disclaimer = """\
 This utility is used to collect sos reports from multiple \
 nodes simultaneously. Remote connections are made and/or maintained \
 to those nodes via well-known transport protocols such as SSH.
@@ -1174,7 +1174,7 @@ organization before being passed to any third party.
 
 No configuration changes will be made to the system running \
 this utility or remote systems that it connects to.
-""")
+"""
         self.ui_log.info(f"\nsos collect (version {__version__})\n")
         intro_msg = self._fmt_msg(disclaimer % self.tmpdir)
         self.ui_log.info(intro_msg)
@@ -1283,7 +1283,7 @@ this utility or remote systems that it connects to.
         self.log_info(msg % (self.retrieved, self.report_num))
         self.close_all_connections()
         if self.retrieved > 0:
-            arc_name = self.create_cluster_archive()
+            self.arc_name = self.create_cluster_archive()
         else:
             msg = 'No sos reports were collected, nothing to archive...'
             self.exit(msg, 1)
@@ -1291,7 +1291,7 @@ this utility or remote systems that it connects to.
         if (self.opts.upload and self.policy.get_upload_url()) or \
                 self.opts.upload_s3_endpoint:
             try:
-                self.policy.upload_archive(arc_name)
+                self.policy.upload_archive(self.arc_name)
                 self.ui_log.info("Uploaded archive successfully")
             except Exception as err:
                 self.ui_log.error(f"Upload attempt failed: {err}")

@@ -119,10 +119,10 @@ class RedHatPolicy(LinuxPolicy):
             'fedora': FedoraPolicy
         }
 
-        for subc in subs:
+        for subc, value in subs.items():
             subln = bold(f"policies.{subc}")
             section.add_text(
-                f"{' ':>8}{subln:<35}{subs[subc].distro:<30}",
+                f"{' ':>8}{subln:<35}{value.distro:<30}",
                 newline=False
             )
 
@@ -433,7 +433,7 @@ support representative.
         # There's really no need to transform the size to Gb,
         # so we don't need to call any size converter implemented
         # in tools.py
-        if (size >= self._max_size_request):
+        if size >= self._max_size_request:
             self.ui_log.warning(
                 _("Size of archive is bigger than Red Hat Customer Portal "
                   "limit for uploads of "
@@ -455,13 +455,12 @@ support representative.
             uploaded = False
             if not self.upload_url.startswith(RH_API_HOST):
                 raise
-            else:
-                self.ui_log.error(
-                    _(f"Upload to Red Hat Customer Portal failed due to "
-                      f"{e}. Trying {RH_SFTP_HOST}")
+            self.ui_log.error(
+                _(f"Upload to Red Hat Customer Portal failed due to "
+                  f"{e}. Trying {RH_SFTP_HOST}")
                 )
-                self.upload_url = RH_SFTP_HOST
-                uploaded = super().upload_archive(archive)
+            self.upload_url = RH_SFTP_HOST
+            uploaded = super().upload_archive(archive)
         return uploaded
 
     def dist_version(self):

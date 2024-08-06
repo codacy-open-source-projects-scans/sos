@@ -73,12 +73,10 @@ class SoSHostnameMap(SoSMap):
                 _domain_to_inject = '.'.join(domain.split('.')[1:-1])
                 if not _domain_to_inject:
                     continue
-                for existing_domain in self.dataset.keys():
+                for existing_domain, value in self.dataset.items():
                     _existing = '.'.join(existing_domain.split('.')[:-1])
                     if _existing == _domain_to_inject:
-                        _ob_domain = '.'.join(
-                            self.dataset[existing_domain].split('.')[:-1]
-                        )
+                        _ob_domain = '.'.join(value.split('.')[:-1])
                         self._domains[_domain_to_inject] = _ob_domain
         self.set_initial_counts()
 
@@ -122,7 +120,7 @@ class SoSHostnameMap(SoSMap):
         if len(host) == 1:
             # don't block on host's shortname
             return host[0] in self.hosts
-        if any([no_tld.endswith(_d) for _d in self._domains]):
+        if any(no_tld.endswith(_d) for _d in self._domains):
             return True
 
         return False
@@ -168,12 +166,12 @@ class SoSHostnameMap(SoSMap):
                 if len(_test) == 1 or not _test[0]:
                     # does not match existing obfuscation
                     continue
-                elif not _host_substr and (_test[0].endswith('.') or
-                                           item.endswith(_existing)):
+                if not _host_substr and (_test[0].endswith('.') or
+                                         item.endswith(_existing)):
                     # new hostname in known domain
                     final = super().get(item)
                     break
-                elif item.split(_test[0]):
+                if item.split(_test[0]):
                     # string that includes existing FQDN obfuscation substring
                     # so, only obfuscate the FQDN part
                     try:
@@ -196,7 +194,7 @@ class SoSHostnameMap(SoSMap):
         if len(host) == 2:
             # we have just a domain name, e.g. example.com
             dname = self.sanitize_domain(host)
-            if all([h.isupper() for h in host]):
+            if all(h.isupper() for h in host):
                 dname = dname.upper()
             return dname
         if len(host) > 2:
@@ -215,7 +213,7 @@ class SoSHostnameMap(SoSMap):
             ob_domain = self.sanitize_domain(domain)
             self.dataset[item] = ob_domain
             _fqdn = '.'.join([ob_hostname, ob_domain])
-            if all([h.isupper() for h in host]):
+            if all(h.isupper() for h in host):
                 _fqdn = _fqdn.upper()
             return _fqdn
         return None

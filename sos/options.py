@@ -111,9 +111,9 @@ class SoSOptions():
         for arg in self.arg_defaults:
             setattr(self, arg, self.arg_defaults[arg])
         # next, load any kwargs
-        for arg in kwargs.keys():
+        for arg, kwarg in kwargs.items():
             self.arg_names.append(arg)
-            setattr(self, arg, kwargs[arg])
+            setattr(self, arg, kwarg)
 
     @classmethod
     def from_args(cls, args, arg_defaults={}):
@@ -167,8 +167,7 @@ class SoSOptions():
                 raise Exception(
                     f"Value of '{key}' in {conf} must be True or False or "
                     "analagous")
-            else:
-                return val
+            return val
         if isinstance(self.arg_defaults[key], int):
             try:
                 return int(val)
@@ -225,10 +224,11 @@ class SoSOptions():
                 with open(config_file) as f:
                     config.read_file(f, config_file)
             except DuplicateOptionError as err:
-                raise exit(f"Duplicate option '{err.option}' in section "
-                           f"'{err.section}' in file {config_file}")
+                raise Exception(f"Duplicate option '{err.option}' in section "
+                                f"'{err.section}' in file {config_file}")
             except (ParsingError, Error):
-                raise exit(f'Failed to parse configuration file {config_file}')
+                raise Exception(f'Failed to parse configuration file '
+                                f'{config_file}')
         except (OSError, IOError) as e:
             print(
                 f'WARNING: Unable to read configuration file {config_file} : '
