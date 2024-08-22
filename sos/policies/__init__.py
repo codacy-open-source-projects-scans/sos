@@ -141,7 +141,8 @@ any third party.
         self.sysroot = sysroot
         self.register_presets(GENERIC_PRESETS)
 
-    def check(self, remote=''):  # pylint: disable=unused-argument
+    @classmethod
+    def check(cls, remote=''):
         """
         This function is responsible for determining if the underlying system
         is supported by this policy.
@@ -153,7 +154,7 @@ any third party.
         :returns: ``True`` if the Policy should be loaded, else ``False``
         :rtype: ``bool``
         """
-        return False
+        raise NotImplementedError
 
     @property
     def forbidden_paths(self):
@@ -196,7 +197,6 @@ any third party.
         """
         Return the OS version
         """
-        pass
 
     def get_preferred_archive(self):
         """
@@ -307,13 +307,11 @@ any third party.
         """
         This function is called prior to collection.
         """
-        pass
 
     def post_work(self):
         """
         This function is called after the sos report has been generated.
         """
-        pass
 
     def pkg_by_name(self, pkg):
         """Wrapper to retrieve a package from the Policy's package manager
@@ -490,7 +488,7 @@ any third party.
         :returns:   Formatted string of URLS
         :rtype:     ``str``
         """
-        width = max([len(v[0]) for v in self.vendor_urls])
+        width = max(len(v[0]) for v in self.vendor_urls)
         return "\n".join(
             f"\t{url[0]:<{width}} : {url[1]}" for url in self.vendor_urls
         )
@@ -549,7 +547,7 @@ any third party.
         for preset_path in os.listdir(presets_path):
             preset_path = os.path.join(presets_path, preset_path)
 
-            with open(preset_path) as pf:
+            with open(preset_path, encoding='utf-8') as pf:
                 try:
                     preset_data = json.load(pf)
                 except ValueError:
@@ -578,7 +576,7 @@ any third party.
         if not name:
             raise ValueError("Preset name cannot be empty")
 
-        if name in self.presets.keys():
+        if name in self.presets:
             raise ValueError(f"A preset with name '{name}' already exists")
 
         preset = PresetDefaults(name=name, desc=desc, note=note, opts=opts)
@@ -587,7 +585,7 @@ any third party.
         preset.write(presets_path)
 
     def del_preset(self, name=""):
-        if not name or name not in self.presets.keys():
+        if not name or name not in self.presets:
             raise ValueError(f"Unknown profile: '{name}'")
 
         preset = self.presets[name]

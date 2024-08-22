@@ -33,7 +33,6 @@ class Node:
 
 class Leaf(Node):
     """Marker class that can be added to a Section node"""
-    pass
 
 
 class Report(Node):
@@ -186,9 +185,9 @@ class PlainTextReport:
         if len(self.FOOTER) > 0:
             line_buf.append(self.FOOTER)
 
-        output = u'\n'.join(map(lambda i: (i if isinstance(i, str)
-                                           else i.decode('utf8', 'ignore')),
-                                line_buf))
+        output = '\n'.join(map(lambda i: (i if isinstance(i, str)
+                                          else i.decode('utf8', 'ignore')),
+                               line_buf))
         return output
 
     def process_subsection(self, section, key, header, format_, footer):

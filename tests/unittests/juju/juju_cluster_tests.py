@@ -24,7 +24,8 @@ class MockOptions:
 
 def get_juju_output(model):
     _dir = pathlib.Path(__file__).parent.resolve()
-    with open(_dir / "data" / f"juju_output_{model}.json") as f:
+    with open(_dir / "data" / f"juju_output_{model}.json",
+              encoding='utf-8') as f:
         return f.read()
 
 
@@ -70,7 +71,7 @@ class JujuTest(unittest.TestCase):
             }
         )
         nodes = cluster.get_nodes()
-        assert nodes == []
+        assert not nodes
 
     @patch(
         "sos.collector.clusters.juju.juju._get_juju_version",

@@ -159,7 +159,7 @@ class BaseSoSTest(Test):
                 # entire test suite, which will become very difficult to read
 
                 # don't flood w/ super verbose logs
-                LOG_UI.error('ERROR:\n' + msg[:8196])
+                LOG_UI.error(f'ERROR:\n{msg[:8196]}')
                 if err.result.interrupted:
                     raise Exception("Timeout exceeded, see output above")
                 raise Exception("Command failed, see output above: "
@@ -179,13 +179,13 @@ class BaseSoSTest(Test):
         fname = os.path.join(self.tmpdir, fname)
         if isinstance(content, bytes):
             content = content.decode()
-        with open(fname, 'w') as wfile:
+        with open(fname, 'w', encoding='utf-8') as wfile:
             wfile.write(content)
 
     def read_file_from_tmpdir(self, fname):
         fname = os.path.join(self.tmpdir, fname)
         try:
-            with open(fname, 'r') as tfile:
+            with open(fname, 'r', encoding='utf-8') as tfile:
                 return tfile.read()
         except Exception:
             pass
@@ -319,20 +319,17 @@ class BaseSoSTest(Test):
         """Called at the end of a test run to ensure that any needed per-test
         cleanup can be done.
         """
-        pass
 
     def setup_mocking(self):
         """Since we need to use setUp() in our overrides of avocado.Test,
         provide an alternate method for test cases that subclass BaseSoSTest
         to use.
         """
-        pass
 
     def pre_sos_setup(self):
         """Do any needed non-mocking setup prior to the sos execution that is
         called in setUp()
         """
-        pass
 
     def assertFileExists(self, fname):
         """Asserts that fname exists on the filesystem"""
@@ -389,7 +386,7 @@ class BaseSoSReportTest(BaseSoSTest):
                 self._manifest = json.loads(content)
             except Exception:
                 self._manifest = ''
-                self.warning('Could not load manifest for test')
+                self.log.warn('Could not load manifest for test')
         return self._manifest
 
     @property
@@ -511,7 +508,8 @@ class BaseSoSReportTest(BaseSoSTest):
         :rtype: ``str``
         """
         content = ''
-        with open(self.get_name_in_archive(fname), 'r') as gfile:
+        with open(self.get_name_in_archive(fname), 'r',
+                  encoding='utf-8') as gfile:
             content = gfile.read()
         return content
 
@@ -581,7 +579,7 @@ class BaseSoSReportTest(BaseSoSTest):
         matched = False
         fname = self.get_name_in_archive(fname)
         self.assertFileExists(fname)
-        with open(fname, 'r') as lfile:
+        with open(fname, 'r', encoding='utf-8') as lfile:
             _contents = lfile.read()
             for line in _contents.splitlines():
                 if re.match(f".*{content}.*", line, re.I):
@@ -602,7 +600,7 @@ class BaseSoSReportTest(BaseSoSTest):
         """
         matched = False
         fname = self.get_name_in_archive(fname)
-        with open(fname, 'r') as mfile:
+        with open(fname, 'r', encoding='utf-8') as mfile:
             for line in mfile.read().splitlines():
                 if re.match(f".*{content}.*", line, re.I):
                     matched = True

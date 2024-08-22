@@ -27,17 +27,18 @@ def j(filename):
 
 
 def create_file(size, dirname=None):
-    f = tempfile.NamedTemporaryFile(delete=False, dir=dirname, mode='w')
-    fsize = size * 1024 * 1024
-    content = ''.join(random.choice(ascii_lowercase) for x in range(fsize))
-    f.write(content)
-    f.flush()
-    f.close()
-    return f.name
+    with tempfile.NamedTemporaryFile(delete=False, dir=dirname, mode='w') as f:
+        fsize = size * 1024 * 1024
+        content = ''.join(random.choice(ascii_lowercase) for x in range(fsize))
+        f.write(content)
+        f.flush()
+        return f.name
+    return None
 
 
 class MockArchive(TarFileArchive):
 
+    # pylint: disable=super-init-not-called
     def __init__(self):
         self.m = {}
         self.strings = {}
@@ -50,14 +51,14 @@ class MockArchive(TarFileArchive):
             dest = src
         self.m[src] = dest
 
-    def add_string(self, content, dest):
+    def add_string(self, content, dest, mode='w'):
         self.m[dest] = content
 
-    def add_link(self, dest, link_name):
+    def add_link(self, source, link_name):
         pass
 
-    def open_file(self, name):
-        return open(self.m.get(name), 'r')
+    def open_file(self, path):
+        return open(self.m.get(path), 'r', encoding='utf-8')
 
     def close(self):
         pass
@@ -111,7 +112,7 @@ class ForbiddenMockPlugin(Plugin):
 class EnablerPlugin(Plugin):
 
     # pylint: disable=unused-argument
-    def is_installed(self, pkg):
+    def is_installed(self, package_name):
         return self.is_installed
 
 
@@ -130,14 +131,14 @@ class MockOptions:
 class PluginToolTests(unittest.TestCase):
 
     def test_regex_findall(self):
-        test_s = u"\n".join(
+        test_s = "\n".join(
             ['this is only a test', 'there are only two lines'])
         test_fo = StringIO(test_s)
         matches = regex_findall(r".*lines$", test_fo)
         self.assertEqual(matches, ['there are only two lines'])
 
     def test_regex_findall_miss(self):
-        test_s = u"\n".join(
+        test_s = "\n".join(
             ['this is only a test', 'there are only two lines'])
         test_fo = StringIO(test_s)
         matches = regex_findall(r".*not_there$", test_fo)

@@ -1,3 +1,5 @@
+# Copyright (C) Eduard Abdullin <eabdullin@cloudlinux.com>
+
 # This file is part of the sos project: https://github.com/sosreport/sos
 #
 # This copyrighted material is made available to anyone wishing to use,
@@ -10,11 +12,13 @@ import os
 from sos.policies.distros.redhat import RedHatPolicy, OS_RELEASE
 
 
-class AnolisPolicy(RedHatPolicy):
-
-    distro = "Anolis OS"
-    vendor = "The OpenAnolis Project"
-    vendor_urls = [('Distribution Website', 'https://openanolis.org/')]
+class CloudLinuxPolicy(RedHatPolicy):
+    distro = "CloudLinux"
+    vendor = "CloudLinux"
+    vendor_urls = [
+        ('Distribution Website', 'https://www.cloudlinux.com/'),
+        ('Commercial Support', 'https://www.cloudlinux.com/')
+    ]
 
     def __init__(self, sysroot=None, init=None, probe_runtime=True,
                  remote_exec=None):
@@ -24,23 +28,19 @@ class AnolisPolicy(RedHatPolicy):
 
     @classmethod
     def check(cls, remote=''):
-
         if remote:
             return cls.distro in remote
 
-        # Return False if /etc/os-release is missing
-        if not os.path.exists(OS_RELEASE):
+        if not os.path.isfile('/etc/cloudlinux-release'):
             return False
 
-        # Return False if /etc/anolis-release is missing
-        if not os.path.isfile('/etc/anolis-release'):
-            return False
+        if os.path.exists(OS_RELEASE):
+            with open(OS_RELEASE, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('NAME'):
+                        if 'CloudLinux' in line:
+                            return True
 
-        with open(OS_RELEASE, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.startswith('NAME'):
-                    if 'Anolis OS' in line:
-                        return True
         return False
 
 # vim: set et ts=4 sw=4 :

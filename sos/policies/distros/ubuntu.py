@@ -61,7 +61,7 @@ class UbuntuPolicy(DebianPolicy):
             return cls.distro in remote
 
         try:
-            with open('/etc/lsb-release', 'r') as fp:
+            with open('/etc/lsb-release', 'r', encoding='utf-8') as fp:
                 return "Ubuntu" in fp.read()
         except IOError:
             return False
@@ -70,7 +70,7 @@ class UbuntuPolicy(DebianPolicy):
         """ Returns the version stated in DISTRIB_RELEASE
         """
         try:
-            with open('/etc/lsb-release', 'r') as fp:
+            with open('/etc/lsb-release', 'r', encoding='utf-8') as fp:
                 lines = fp.readlines()
                 for line in lines:
                     if "DISTRIB_RELEASE" in line:
@@ -79,7 +79,7 @@ class UbuntuPolicy(DebianPolicy):
         except (IOError, ValueError):
             return False
 
-    def get_upload_https_auth(self):
+    def get_upload_https_auth(self, user=None, password=None):
         if self.upload_url.startswith(self._upload_url):
             return (self._upload_user, self._upload_password)
         return super().get_upload_https_auth()

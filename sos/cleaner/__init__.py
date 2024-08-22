@@ -141,7 +141,8 @@ class SoSCleaner(SoSComponent):
 
         for _parser in self.opts.disable_parsers:
             for _loaded in self.parsers:
-                _loaded_name = _loaded.name.lower().split('parser')[0].strip()
+                _temp = _loaded.name.lower().split('parser', maxsplit=1)[0]
+                _loaded_name = _temp.strip()
                 if _parser.lower().strip() == _loaded_name:
                     self.log_info(f"Disabling parser: {_loaded_name}")
                     self.ui_log.warning(
@@ -206,7 +207,7 @@ class SoSCleaner(SoSComponent):
                     f"ERROR: map file {self.opts.map_file} does not exist, "
                     "will not load any obfuscation matches")
         else:
-            with open(self.opts.map_file, 'r') as mf:
+            with open(self.opts.map_file, 'r', encoding='utf-8') as mf:
                 try:
                     _conf = json.load(mf)
                 except json.JSONDecodeError:
@@ -413,7 +414,8 @@ third party.
                 chksum_name = self.obfuscate_string(
                     f"{arc_path.split('/')[-1]}.{self.hash_name}"
                 )
-                with open(os.path.join(self.sys_tmp, chksum_name), 'w') as cf:
+                with open(os.path.join(self.sys_tmp, chksum_name), 'w',
+                          encoding='utf-8') as cf:
                     cf.write(checksum)
             self.write_cleaner_log()
 
@@ -483,7 +485,7 @@ third party.
         """Write the mapping to a file on disk that is in the same location as
         the final archive(s).
         """
-        with open(path, 'w') as mf:
+        with open(path, 'w', encoding='utf-8') as mf:
             mf.write(json.dumps(_map, indent=4))
         return path
 
@@ -521,7 +523,7 @@ third party.
         log_name = os.path.join(
             self.sys_tmp, f"{self.arc_name}-obfuscation.log"
         )
-        with open(log_name, 'w') as logfile:
+        with open(log_name, 'w', encoding='utf-8') as logfile:
             self.sos_log_file.seek(0)
             for line in self.sos_log_file.readlines():
                 logfile.write(line)
@@ -782,20 +784,21 @@ third party.
                 return 0
             self.log_debug(f"Obfuscating {short_name or filename}",
                            caller=arc_name)
-            tfile = tempfile.NamedTemporaryFile(mode='w', dir=self.tmpdir)
-            with open(filename, 'r', errors='replace') as fname:
-                for line in fname:
-                    try:
-                        line, count = self.obfuscate_line(line, _parsers)
-                        subs += count
-                        tfile.write(line)
-                    except Exception as err:
-                        self.log_debug(f"Unable to obfuscate {short_name}: "
-                                       f"{err}", caller=arc_name)
-            tfile.seek(0)
-            if subs:
-                shutil.copyfile(tfile.name, filename)
-            tfile.close()
+            with tempfile.NamedTemporaryFile(mode='w', dir=self.tmpdir) \
+                    as tfile:
+                with open(filename, 'r', encoding='utf-8',
+                          errors='replace') as fname:
+                    for line in fname:
+                        try:
+                            line, count = self.obfuscate_line(line, _parsers)
+                            subs += count
+                            tfile.write(line)
+                        except Exception as err:
+                            self.log_debug(f"Unable to obfuscate {short_name}:"
+                                           f"{err}", caller=arc_name)
+                tfile.seek(0)
+                if subs:
+                    shutil.copyfile(tfile.name, filename)
 
         _ob_short_name = self.obfuscate_string(short_name.split('/')[-1])
         _ob_filename = short_name.replace(short_name.split('/')[-1],

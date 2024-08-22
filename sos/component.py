@@ -199,7 +199,7 @@ class SoSComponent():
         """This should be overridden by each subcommand to add its own unique
         options to the parser
         """
-        pass
+        raise NotImplementedError
 
     def apply_options_from_cmdline(self, opts):
         """(Re-)apply options specified via the cmdline to an options instance
@@ -353,8 +353,7 @@ class SoSComponent():
         if self.opts.encrypt:
             self._get_encryption_method()
         enc_opts = {
-            'encrypt': True if (self.opts.encrypt_pass or
-                                self.opts.encrypt_key) else False,
+            'encrypt': self.opts.encrypt_pass or self.opts.encrypt_key,
             'key': self.opts.encrypt_key,
             'password': self.opts.encrypt_pass
         }

@@ -43,7 +43,7 @@ WARNING: Failed to load 'magic' module version >= 0.4.20 which sos aims to \
 use for detecting binary files. A less effective method will be used. It is \
 recommended to install proper python3-magic package with the module.
 """
-    log.warning('\n' + fill(msg, 72, replace_whitespace=False) + '\n')
+    log.warning(f'\n{fill(msg, 72, replace_whitespace=False)}\n')
 
 
 TIMEOUT_DEFAULT = 300
@@ -113,7 +113,7 @@ def fileobj(path_or_file, mode='r'):
     """Returns a file-like object that can be used as a context manager"""
     if isinstance(path_or_file, str):
         try:
-            return open(path_or_file, mode)
+            return open(path_or_file, mode, encoding='utf-8')
         except IOError:
             log.debug(f"fileobj: {path_or_file} could not be opened")
             return closing(io.StringIO())
@@ -121,18 +121,13 @@ def fileobj(path_or_file, mode='r'):
         return closing(path_or_file)
 
 
-def convert_bytes(bytes_, K=1 << 10, M=1 << 20, G=1 << 30, T=1 << 40):
+def convert_bytes(num_bytes):
     """Converts a number of bytes to a shorter, more human friendly format"""
-    fn = float(bytes_)
-    if bytes_ >= T:
-        return f'{(fn / T):.1fT}'
-    if bytes_ >= G:
-        return f'{(fn / G):.1fG}'
-    if bytes_ >= M:
-        return f'{(fn / M):.1fM}'
-    if bytes_ >= K:
-        return f'{(fn / K):.1fK}'
-    return f'{bytes_}'
+    sizes = {'T': 1 << 40, 'G': 1 << 30, 'M': 1 << 20, 'K': 1 << 10}
+    for symbol, size in sizes.items():
+        if num_bytes >= size:
+            return f"{float(num_bytes) / size:.1f}{symbol}"
+    return f"{num_bytes}"
 
 
 def file_is_binary(fname):
@@ -159,7 +154,7 @@ def file_is_binary(fname):
             pass
     # if for some reason the above check fails or magic>=0.4.20 is not present,
     # fail over to checking the very first byte of the file content
-    with open(fname, 'tr') as tfile:
+    with open(fname, 'tr', encoding='utf-8') as tfile:
         try:
             # when opened as above (tr), reading binary content will raise
             # an exception
@@ -280,62 +275,61 @@ def sos_get_command_output(command, timeout=TIMEOUT_DEFAULT, stderr=False,
         else:
             expanded_args.append(arg)
     if to_file:
-        _output = open(to_file, 'w')
+        # pylint: disable=consider-using-with
+        _output = open(to_file, 'w', encoding='utf-8')
     else:
         _output = PIPE
     try:
-        p = Popen(expanded_args, shell=False, stdout=_output,
-                  stderr=STDOUT if stderr else PIPE,
-                  bufsize=-1, env=cmd_env, close_fds=True,
-                  preexec_fn=_child_prep_fn)
+        with Popen(expanded_args, shell=False, stdout=_output,
+                   stderr=STDOUT if stderr else PIPE,
+                   bufsize=-1, env=cmd_env, close_fds=True,
+                   preexec_fn=_child_prep_fn) as p:
 
-        if not to_file:
-            reader = AsyncReader(p.stdout, sizelimit, binary)
-        else:
-            reader = FakeReader(p, binary)
+            if not to_file:
+                reader = AsyncReader(p.stdout, sizelimit, binary)
+            else:
+                reader = FakeReader(p, binary)
 
-        if poller:
-            while reader.running:
-                _check_poller(p)
-        else:
-            try:
-                # override timeout=0 to timeout=None, as Popen will treat the
-                # former as a literal 0-second timeout
-                p.wait(timeout if timeout else None)
-            except Exception:
-                p.terminate()
-                if to_file:
-                    _output.close()
-                # until we separate timeouts from the `timeout` command
-                # handle per-cmd timeouts via Plugin status checks
-                reader.running = False
-                return {'status': 124, 'output': reader.get_contents(),
-                        'truncated': reader.is_full}
-        if to_file:
-            _output.close()
+            if poller:
+                while reader.running:
+                    _check_poller(p)
+            else:
+                try:
+                    # override timeout=0 to timeout=None, as Popen will treat
+                    # the former as a literal 0-second timeout
+                    p.wait(timeout if timeout else None)
+                except Exception:
+                    p.terminate()
+                    if to_file:
+                        _output.close()
+                    # until we separate timeouts from the `timeout` command
+                    # handle per-cmd timeouts via Plugin status checks
+                    reader.running = False
+                    return {'status': 124, 'output': reader.get_contents(),
+                            'truncated': reader.is_full}
+            if to_file:
+                _output.close()
 
-        # wait for Popen to set the returncode
-        while p.poll() is None:
-            pass
+            # wait for Popen to set the returncode
+            while p.poll() is None:
+                pass
 
-        stdout = reader.get_contents()
-        truncated = reader.is_full
+            if p.returncode in (126, 127):
+                stdout = b""
+            else:
+                stdout = reader.get_contents()
 
+            return {
+                'status': p.returncode,
+                'output': stdout,
+                'truncated': reader.is_full
+            }
     except OSError as e:
         if to_file:
             _output.close()
         if e.errno == errno.ENOENT:
             return {'status': 127, 'output': "", 'truncated': ''}
         raise e
-
-    if p.returncode in (126, 127):
-        stdout = b""
-
-    return {
-        'status': p.returncode,
-        'output': stdout,
-        'truncated': truncated
-    }
 
 
 def import_module(module_fqname, superclasses=None):

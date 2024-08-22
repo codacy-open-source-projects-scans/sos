@@ -14,7 +14,7 @@
 This module houses the i18n setup and message function. The default is to use
 gettext to internationalize messages.
 """
-__version__ = "4.7.2"
+__version__ = "4.8.0"
 
 import os
 import sys
@@ -68,10 +68,10 @@ class SoS():
                                            ['collector'])
         except ModuleNotFoundError as err:
             import sos.missing
-            if 'sos.collector' in err.msg:
+            if 'sos.collector' in str(err.msg):
                 # is not locally installed - packaged separately
                 self._components['collect'] = (sos.missing.MissingCollect, [])
-            elif 'pexpect' in err.msg:
+            elif 'pexpect' in str(err.msg):
                 # cannot be imported due to missing the pexpect dep
                 self._components['collect'] = (sos.missing.MissingPexpect, [])
             else:
@@ -167,7 +167,7 @@ class SoS():
         initialize that component.
         """
         _com = self.args.component
-        if _com not in self._components.keys():
+        if _com not in self._components:
             print(f"Unknown subcommand '{_com}' specified")
         try:
             _to_load = self._components[_com][0]

@@ -780,7 +780,7 @@ class SoSReport(SoSComponent):
 
     def _is_in_profile(self, plugin_class):
         only_plugins = self.opts.only_plugins
-        if not len(self.opts.profiles):
+        if not self.opts.profiles:
             return True
         if not hasattr(plugin_class, "profiles"):
             return False
@@ -839,7 +839,7 @@ class SoSReport(SoSComponent):
             plugbase, __ = os.path.splitext(plug)
             try:
                 plugin_classes = import_plugin(plugbase, valid_plugin_classes)
-                if not len(plugin_classes):
+                if not plugin_classes:
                     # no valid plugin classes for this policy
                     continue
 
@@ -848,7 +848,7 @@ class SoSReport(SoSComponent):
                 if not validate_plugin(plugin_class,
                                        experimental=self.opts.experimental):
                     self.soslog.warning(
-                        _("plugin %s does not validate, skipping") % plug)
+                        _(f"plugin {plug} does not validate, skipping"))
                     if self.opts.verbosity > 0:
                         self._skip(plugin_class, _("does not validate"))
                         continue
@@ -888,12 +888,12 @@ class SoSReport(SoSComponent):
                         remaining_profiles.remove(i)
                 self._load(plugin_class)
             except Exception as e:
-                self.soslog.warning(_("plugin %s does not install, "
-                                      "skipping: %s") % (plug, e))
+                self.soslog.warning(_(f"plugin {plug} does not install, "
+                                      f"skipping: {e}"))
                 self.handle_exception()
         if len(remaining_profiles) > 0:
-            self.soslog.error(_("Unknown or inactive profile(s) provided:"
-                                " %s") % ", ".join(remaining_profiles))
+            self.soslog.error(_('Unknown or inactive profile(s) provided:'
+                                f' {", ".join(remaining_profiles)}'))
             self.list_profiles()
             self._exit(1)
 
@@ -955,7 +955,7 @@ class SoSReport(SoSComponent):
                             self.soslog.error(err)
                             self._exit(1)
                     del opts[plugname]
-            for plugname in opts.keys():
+            for plugname in opts:
                 self.soslog.error('WARNING: unable to set option for disabled '
                                   f'or non-existing plugin ({plugname}).')
             # in case we printed warnings above, visually intend them from
@@ -1012,7 +1012,7 @@ class SoSReport(SoSComponent):
 
     def _report_profiles_and_plugins(self):
         self.ui_log.info("")
-        if len(self.loaded_plugins):
+        if self.loaded_plugins:
             self.ui_log.info(f" {len(self.profiles)} profiles, "
                              f"{len(self.loaded_plugins)} plugins")
         else:
@@ -1182,7 +1182,7 @@ class SoSReport(SoSComponent):
         try:
             policy.del_preset(name=name)
         except Exception as e:
-            self.ui_log.error(str(e) + "\n")
+            self.ui_log.error(f"{str(e)}\n")
             return False
 
         self.ui_log.info(f"Deleted preset '{name}'\n")
@@ -1257,7 +1257,7 @@ class SoSReport(SoSComponent):
                 plug.manifest.add_field('setup_end', end)
                 plug.manifest.add_field('setup_time', end - start)
             except KeyboardInterrupt:
-                raise
+                raise KeyboardInterrupt
             except (OSError, IOError) as e:
                 if e.errno in fatal_fs_errors:
                     self.ui_log.error("")
@@ -1505,24 +1505,22 @@ class SoSReport(SoSComponent):
 
         try:
             hash_size = 1024**2  # Hash 1MiB of content at a time.
-            archive_fp = open(archive, 'rb')
             digest = hashlib.new(hash_name)
-            while True:
-                hashdata = archive_fp.read(hash_size)
-                if not hashdata:
-                    break
-                digest.update(hashdata)
-            archive_fp.close()
+            with open(archive, 'rb') as archive_fp:
+                while True:
+                    hashdata = archive_fp.read(hash_size)
+                    if not hashdata:
+                        break
+                    digest.update(hashdata)
         except Exception:
             self.handle_exception()
         return digest.hexdigest()
 
     def _write_checksum(self, archive, hash_name, checksum):
         # store checksum into file
-        fp = open(archive + "." + hash_name, "w")
-        if checksum:
-            fp.write(checksum + "\n")
-        fp.close()
+        with open(archive + "." + hash_name, "w", encoding='utf-8') as fp:
+            if checksum:
+                fp.write(checksum + "\n")
 
     def final_work(self):
         archive = None    # archive path
@@ -1583,7 +1581,7 @@ class SoSReport(SoSComponent):
             # that still will be moved to the sos report final directory path
             tmpdir_path = Path(self.tmpdir)
             self.estimated_plugsizes['sos_logs_reports'] = sum(
-                    [f.lstat().st_size for f in tmpdir_path.glob('**/*')])
+                    f.lstat().st_size for f in tmpdir_path.glob('**/*'))
 
             _sum = get_human_readable(sum(self.estimated_plugsizes.values()))
             self.ui_log.info("Estimated disk space requirement for whole "
@@ -1796,8 +1794,8 @@ class SoSReport(SoSComponent):
 
     def _merge_preset_options(self):
         # Log command line options
-        msg = "[%s:%s] executing 'sos %s'"
-        self.soslog.info(msg % (__name__, "setup", " ".join(self.cmdline)))
+        self.soslog.info(f"[{__name__}:setup] executing "
+                         f"'sos {' '.join(self.cmdline)}'")
 
         # Log active preset defaults
         preset_args = self.preset.opts.to_args()

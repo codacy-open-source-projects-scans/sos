@@ -459,7 +459,7 @@ class PluginOpt():
         if type('') in self.val_type:
             self.value = str(val)
             return
-        if not any(type(val) is _t for _t in self.val_type):
+        if not any(isinstance(val, _t) for _t in self.val_type):
             valid = []
             for t in self.val_type:
                 if t is None:
@@ -1732,6 +1732,29 @@ class Plugin():
                 return _fname.replace('.', '_')
             return None
 
+        def getmtime(path):
+            """ Files should be sorted in most-recently-modified order, so
+            that we collect the newest data first before reaching the limit."""
+            try:
+                return os.path.getmtime(path)
+            except OSError:
+                return 0
+
+        def time_filter(path):
+            """ When --since is passed, or maxage is coming from the
+            plugin, we need to filter out older files """
+
+            # skip config files or not-logarchive files from the filter
+            if ((logarchive_pattern.search(path) is None) or
+               (configfile_pattern.search(path) is not None)):
+                return True
+            filetime = getmtime(path)
+            filedatetime = datetime.fromtimestamp(filetime)
+            if ((since and filedatetime < since) or
+               (maxage and (time()-filetime < maxage*3600))):
+                return False
+            return True
+
         for copyspec in copyspecs:
             if not (copyspec and len(copyspec)):
                 return False
@@ -1797,31 +1820,8 @@ class Plugin():
                 # operations
                 continue
 
-            # Files should be sorted in most-recently-modified order, so that
-            # we collect the newest data first before reaching the limit.
-            def getmtime(path):
-                try:
-                    return os.path.getmtime(path)
-                except OSError:
-                    return 0
-
-            def time_filter(path):
-                """ When --since is passed, or maxage is coming from the
-                plugin, we need to filter out older files """
-
-                # skip config files or not-logarchive files from the filter
-                if ((logarchive_pattern.search(path) is None) or
-                   (configfile_pattern.search(path) is not None)):
-                    return True
-                filetime = getmtime(path)
-                filedatetime = datetime.fromtimestamp(filetime)
-                if ((since and filedatetime < since) or
-                   (maxage and (time()-filetime < maxage*3600))):
-                    return False
-                return True
-
             if since or maxage:
-                files = list(filter(lambda f: time_filter(f), files))
+                files = list(filter(time_filter, files))
 
             files.sort(key=getmtime, reverse=True)
             current_size = 0
@@ -2007,10 +2007,13 @@ class Plugin():
             kwargs['priority'] = 10
         if 'changes' not in kwargs:
             kwargs['changes'] = False
-        if self.get_option('all_logs') or kwargs['sizelimit'] == 0:
+        if (not getattr(SoSCommand(**kwargs), "snap_cmd", False) and
+           (self.get_option('all_logs') or kwargs['sizelimit'] == 0)):
             kwargs['to_file'] = True
+        if "snap_cmd" in kwargs:
+            kwargs.pop("snap_cmd")
         soscmd = SoSCommand(**kwargs)
-        self._log_debug("packed command: " + soscmd.__str__())
+        self._log_debug(f"packed command: {str(soscmd)}")
         for _skip_cmd in self.skip_commands:
             # This probably seems weird to be doing filename matching on the
             # commands, however we want to remain consistent with our regex
@@ -2073,7 +2076,7 @@ class Plugin():
                        sizelimit=None, pred=None, subdir=None,
                        changes=False, foreground=False, tags=[],
                        priority=10, cmd_as_tag=False, container=None,
-                       to_file=False, runas=None):
+                       to_file=False, runas=None, snap_cmd=False):
         """Run a program or a list of programs and collect the output
 
         Output will be limited to `sizelimit`, collecting the last X amount
@@ -2149,6 +2152,9 @@ class Plugin():
 
         :param runas: Run the `cmd` as the `runas` user
         :type runas: ``str``
+
+        :param snap_cmd: Are the commands being run from a snap?
+        :type snap_cmd: ``bool``
         """
         if isinstance(cmds, str):
             cmds = [cmds]
@@ -2177,7 +2183,7 @@ class Plugin():
                                  changes=changes, foreground=foreground,
                                  priority=priority, cmd_as_tag=cmd_as_tag,
                                  to_file=to_file, container_cmd=container_cmd,
-                                 runas=runas)
+                                 runas=runas, snap_cmd=snap_cmd)
 
     def add_cmd_tags(self, tagdict):
         """Retroactively add tags to any commands that have been run by this
@@ -3150,7 +3156,7 @@ class Plugin():
     def _collect_cmds(self):
         self.collect_cmds.sort(key=lambda x: x.priority)
         for soscmd in self.collect_cmds:
-            self._log_debug("unpacked command: " + soscmd.__str__())
+            self._log_debug(f"unpacked command: {str(soscmd)}")
             user = ""
             if getattr(soscmd, "runas", None) is not None:
                 user = f", as the {soscmd.runas} user"
@@ -3210,7 +3216,6 @@ class Plugin():
         are more likely to be interrupted by timeouts than file or command
         output collections.
         """
-        pass
 
     @contextlib.contextmanager
     def collection_file(self, fname, subdir=None, tags=[]):
@@ -3235,7 +3240,7 @@ class Plugin():
             _pfname = self._make_command_filename(fname, subdir=subdir)
             self.archive.check_path(_pfname, P_FILE)
             _name = self.archive.dest_path(_pfname)
-            with open(_name, 'w') as _file:
+            with open(_name, 'w', encoding='utf-8') as _file:
                 self._log_debug(f"manual collection file opened: {_name}")
                 yield _file
             end = time()
@@ -3370,7 +3375,7 @@ class Plugin():
         self.add_copy_spec(list(self.files))
 
     def setup_verify(self):
-        if not hasattr(self, "verify_packages") or not self.verify_packages:
+        if not hasattr(self, "verify_packages"):
             if hasattr(self, "packages") and self.packages:
                 # Limit automatic verification to only the named packages
                 self.verify_packages = [p + "$" for p in self.packages]
@@ -3464,7 +3469,6 @@ class Plugin():
     def postproc(self):
         """Perform any postprocessing. To be replaced by a plugin if required.
         """
-        pass
 
     def check_process_by_name(self, process):
         """Checks if a named process is found in /proc/[0-9]*/cmdline.
@@ -3480,7 +3484,8 @@ class Plugin():
         try:
             cmd_line_paths = glob.glob(cmd_line_glob)
             for path in cmd_line_paths:
-                with open(self.path_join(path), 'r') as pfile:
+                with open(self.path_join(path), 'r',
+                          encoding='utf-8') as pfile:
                     cmd_line = pfile.read().strip()
                     if process in cmd_line:
                         status = True
@@ -3502,7 +3507,7 @@ class Plugin():
         cmd_line_paths = glob.glob(cmd_line_glob)
         for path in cmd_line_paths:
             try:
-                with open(path, 'r') as f:
+                with open(path, 'r', encoding='utf-8') as f:
                     cmd_line = f.read().strip()
                     if process in cmd_line:
                         pids.append(path.split("/")[2])
@@ -3551,52 +3556,42 @@ class PluginDistroTag():
 
     Use IndependentPlugin for plugins that are distribution agnostic
     """
-    pass
 
 
 class RedHatPlugin(PluginDistroTag):
     """Tagging class for Red Hat's Linux distributions"""
-    pass
 
 
 class UbuntuPlugin(PluginDistroTag):
     """Tagging class for Ubuntu Linux"""
-    pass
 
 
 class DebianPlugin(PluginDistroTag):
     """Tagging class for Debian Linux"""
-    pass
 
 
 class SuSEPlugin(PluginDistroTag):
     """Tagging class for SuSE Linux distributions"""
-    pass
 
 
 class OpenEulerPlugin(PluginDistroTag):
     """Tagging class for openEuler linux distributions"""
-    pass
 
 
 class CosPlugin(PluginDistroTag):
     """Tagging class for Container-Optimized OS"""
-    pass
 
 
 class IndependentPlugin(PluginDistroTag):
     """Tagging class for plugins that can run on any platform"""
-    pass
 
 
 class ExperimentalPlugin(PluginDistroTag):
     """Tagging class that indicates that this plugin is experimental"""
-    pass
 
 
 class AzurePlugin(PluginDistroTag):
     """Tagging class for Azure Linux"""
-    pass
 
 
 def import_plugin(name, superclasses=None):

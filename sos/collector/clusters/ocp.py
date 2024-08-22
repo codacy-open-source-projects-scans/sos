@@ -264,7 +264,7 @@ class ocp(Cluster):
                 self.log_warn("NOTE: By default, only master nodes are listed."
                               "\nTo collect from all/more nodes, override the "
                               "role option with '-c ocp.role=role1:role2'")
-            roles = [r for r in self.get_option('role').split(':')]
+            roles = list(self.get_option('role').split(':'))
             self.node_dict = self._build_dict(res['output'].splitlines())
             for node_name, node in self.node_dict.items():
                 if roles:
@@ -290,10 +290,10 @@ class ocp(Cluster):
                 return label
         return ''
 
-    def check_node_is_primary(self, sosnode):
-        if sosnode.address not in self.node_dict:
+    def check_node_is_primary(self, node):
+        if node.address not in self.node_dict:
             return False
-        return 'master' in self.node_dict[sosnode.address]['roles']
+        return 'master' in self.node_dict[node.address]['roles']
 
     def _toggle_api_opt(self, node, use_api):
         """In earlier versions of sos, the openshift plugin option that is
@@ -368,7 +368,7 @@ class ocp(Cluster):
             elif node.file_exists(_kubeconfig):
                 # if the file exists, then the openshift sos plugin will use it
                 # if the with-api option is turned on
-                if not _kubeconfig == master_kube:
+                if _kubeconfig != master_kube:
                     node.plugopts.append(
                         f"openshift.kubeconfig={_kubeconfig}"
                     )

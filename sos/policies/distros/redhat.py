@@ -22,7 +22,7 @@ from sos.policies.distros import LinuxPolicy, ENV_HOST_SYSROOT
 from sos.policies.package_managers.rpm import RpmPackageManager
 from sos.policies.package_managers.flatpak import FlatpakPackageManager
 from sos.policies.package_managers import MultiPackageManager
-from sos.utilities import bold, convert_bytes
+from sos.utilities import bold, convert_bytes, TIMEOUT_DEFAULT
 from sos import _sos as _
 
 try:
@@ -259,7 +259,7 @@ support representative.
         if not os.path.exists(OS_RELEASE):
             return False
 
-        with open(OS_RELEASE, "r") as f:
+        with open(OS_RELEASE, "r", encoding='utf-8') as f:
             for line in f:
                 if line.startswith("NAME"):
                     (_, value) = line.split("=")
@@ -327,7 +327,7 @@ support representative.
                          f"{self.get_upload_url_string()}")
         return requests.post(self.get_upload_url(), files=files,
                              headers=self._get_upload_https_auth(),
-                             verify=verify)
+                             verify=verify, timeout=TIMEOUT_DEFAULT)
 
     def _get_upload_headers(self):
         if self.get_upload_url().startswith(RH_API_HOST):
@@ -352,7 +352,8 @@ support representative.
             fname = os.path.join(self.upload_directory, fname)
         return fname
 
-    def upload_sftp(self):  # pylint: disable=too-many-branches
+    # pylint: disable=too-many-branches
+    def upload_sftp(self, user=None, password=None):
         """Override the base upload_sftp to allow for setting an on-demand
         generated anonymous login for the RH SFTP server if a username and
         password are not given
@@ -440,8 +441,7 @@ support representative.
                   f"{convert_bytes(self._max_size_request)} "
                   " via sos http upload. \n")
                   )
-            return RH_SFTP_HOST
-        return RH_API_HOST
+            self.upload_url = RH_SFTP_HOST
 
     def upload_archive(self, archive):
         """Override the base upload_archive to provide for automatic failover
@@ -449,7 +449,7 @@ support representative.
         """
         try:
             if self.get_upload_url().startswith(RH_API_HOST):
-                self.upload_url = self.check_file_too_big(archive)
+                self.check_file_too_big(archive)
             uploaded = super().upload_archive(archive)
         except Exception as e:
             uploaded = False
@@ -562,7 +562,7 @@ support representative.
             return coreos
         host_release = os.environ[ENV_HOST_SYSROOT] + OS_RELEASE
         try:
-            with open(host_release, 'r') as hfile:
+            with open(host_release, 'r', encoding='utf-8') as hfile:
                 for line in hfile.read().splitlines():
                     coreos |= 'Red Hat Enterprise Linux CoreOS' in line
         except IOError:

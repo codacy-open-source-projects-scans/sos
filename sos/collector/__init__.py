@@ -195,8 +195,6 @@ class SoSCollector(SoSComponent):
 
             except KeyboardInterrupt:
                 self.exit('Exiting on user cancel', 130)
-            except Exception:
-                raise
 
     def load_clusters(self):
         """Loads all cluster types supported by the local installation for
@@ -253,7 +251,7 @@ class SoSCollector(SoSComponent):
                   f' {e.__class__.__name__}')
             raise e
         modules = inspect.getmembers(module, inspect.isclass)
-        for mod in modules:
+        for mod in modules.copy():
             if mod[0] in ('SosHost', 'Cluster'):
                 modules.remove(mod)
         return modules
@@ -564,7 +562,7 @@ class SoSCollector(SoSComponent):
         """
         self.commons = {
             'cmdlineopts': self.opts,
-            'need_sudo': True if self.opts.ssh_user != 'root' else False,
+            'need_sudo': self.opts.ssh_user != 'root',
             'tmpdir': self.tmpdir,
             'hostlen': max(len(self.opts.primary), len(self.hostname)),
             'policy': self.policy
@@ -660,7 +658,7 @@ class SoSCollector(SoSComponent):
         _opts = {}
         for _, value in self.clusters.items():
             for opt in value.options:
-                if opt.name not in _opts.keys():
+                if opt.name not in _opts:
                     _opts[opt.name] = opt
                 else:
                     for clust in opt.cluster:
@@ -748,7 +746,7 @@ class SoSCollector(SoSComponent):
 
         self.log_debug(f"Loading host group {fname}")
 
-        with open(fname, 'r') as hf:
+        with open(fname, 'r', encoding='utf-8') as hf:
             _group = json.load(hf)
             for key in ['primary', 'cluster_type']:
                 if _group[key]:
@@ -771,7 +769,7 @@ class SoSCollector(SoSComponent):
             'name': self.opts.save_group,
             'primary': self.opts.primary,
             'cluster_type': self.cluster.cluster_type[0],
-            'nodes': [n for n in self.node_list]
+            'nodes': list(self.node_list)
         }
         if os.getuid() != 0:
             group_path = os.path.join(Path.home(), '.config/sos/groups.d')
@@ -780,7 +778,7 @@ class SoSCollector(SoSComponent):
         else:
             group_path = COLLECTOR_CONFIG_DIR
         fname = os.path.join(group_path, cfg['name'])
-        with open(fname, 'w') as hf:
+        with open(fname, 'w', encoding='utf-8') as hf:
             json.dump(cfg, hf)
         os.chmod(fname, 0o600)
         return fname

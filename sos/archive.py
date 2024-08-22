@@ -116,18 +116,18 @@ class Archive:
         directory based cache prior to packaging should return the
         path to the temporary directory where the report content is
         located"""
-        pass
+        raise NotImplementedError
 
     def cleanup(self):
         """Clean up any temporary resources used by an Archive class."""
-        pass
+        raise NotImplementedError
 
     def finalize(self, method):
         """Finalize an archive object via method. This may involve creating
         An archive that is subsequently compressed or simply closing an
         archive that supports in-line handling. If method is automatic then
         the following methods are tried in order: xz, gzip"""
-        pass
+        raise NotImplementedError
 
 
 class FileCacheArchive(Archive):
@@ -377,7 +377,7 @@ class FileCacheArchive(Archive):
                 # Open file case: first rewind the file to obtain
                 # everything written to it.
                 src.seek(0)
-                with open(dest, "w") as f:
+                with open(dest, "w", encoding='utf-8') as f:
                     for line in src:
                         f.write(line)
                 file_name = "open file"
@@ -738,22 +738,21 @@ class TarFileArchive(FileCacheArchive):
             kwargs = {'compresslevel': 6}
         else:
             kwargs = {'preset': 3}
-        tar = tarfile.open(self._archive_name, mode=f"w:{_comp_mode}",
-                           **kwargs)
-        # add commonly reviewed files first, so that they can be more easily
-        # read from memory without needing to extract the whole archive
-        for _content in ['version.txt', 'sos_reports', 'sos_logs']:
-            if not os.path.exists(os.path.join(self._archive_root, _content)):
-                continue
-            tar.add(
-                os.path.join(self._archive_root, _content),
-                arcname=f"{self._name}/{_content}"
-            )
-        # we need to pass the absolute path to the archive root but we
-        # want the names used in the archive to be relative.
-        tar.add(self._archive_root, arcname=self._name,
-                filter=self.copy_permissions_filter)
-        tar.close()
+        with tarfile.open(self._archive_name, mode=f"w:{_comp_mode}",
+                          **kwargs) as tar:
+            # Add commonly reviewed files first, so that they can be more
+            # easily read from memory without needing to extract
+            # the whole archive
+            for _content in ['version.txt', 'sos_reports', 'sos_logs']:
+                if os.path.exists(os.path.join(self._archive_root, _content)):
+                    tar.add(
+                        os.path.join(self._archive_root, _content),
+                        arcname=f"{self._name}/{_content}"
+                    )
+            # we need to pass the absolute path to the archive root but we
+            # want the names used in the archive to be relative.
+            tar.add(self._archive_root, arcname=self._name,
+                    filter=self.copy_permissions_filter)
         self._suffix += f".{_comp_mode}"
         return self.name()
 

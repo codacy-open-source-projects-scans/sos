@@ -160,7 +160,7 @@ class SoSOptions():
         if isinstance(self.arg_defaults[key], type(val)):
             return val
         if isinstance(self.arg_defaults[key], list):
-            return [v for v in val.split(',')]
+            return list(val.split(','))
         if isinstance(self.arg_defaults[key], bool):
             val = str_to_bool(val)
             if val is None:
@@ -221,7 +221,7 @@ class SoSOptions():
         config = ConfigParser()
         try:
             try:
-                with open(config_file) as f:
+                with open(config_file, encoding='utf-8') as f:
                     config.read_file(f, config_file)
             except DuplicateOptionError as err:
                 raise Exception(f"Duplicate option '{err.option}' in section "
@@ -336,7 +336,7 @@ class SosListOption(Action):
     """Allow to specify comma delimited list of plugins"""
 
     def __call__(self, parser, namespace, values, option_string=None):
-        items = [opt for opt in values.split(',')]
+        items = list(values.split(','))
         if getattr(namespace, self.dest):
             items += getattr(namespace, self.dest)
         setattr(namespace, self.dest, items)

@@ -25,7 +25,7 @@ from sos.policies.runtimes.docker import DockerContainerRuntime
 from sos.policies.runtimes.lxd import LxdContainerRuntime
 
 from sos.utilities import (shell_out, is_executable, bold,
-                           sos_get_command_output)
+                           sos_get_command_output, TIMEOUT_DEFAULT)
 
 
 try:
@@ -126,7 +126,7 @@ class LinuxPolicy(Policy):
                         self.runtimes['default'] = self.runtimes[runtime.name]
                     self.runtimes[runtime.name].load_container_info()
 
-            if self.runtimes and 'default' not in self.runtimes.keys():
+            if self.runtimes and 'default' not in self.runtimes:
                 # still allow plugins to query a runtime present on the system
                 # even if that is not the policy default one
                 idx = list(self.runtimes.keys())
@@ -138,6 +138,14 @@ class LinuxPolicy(Policy):
             '/etc/passwd',
             '/etc/shadow'
         ]
+
+    @classmethod
+    def check(cls, remote=''):
+        """
+        This function is responsible for determining if the underlying system
+        is supported by this policy.
+        """
+        raise NotImplementedError
 
     def kernel_version(self):
         return self.release
@@ -253,7 +261,7 @@ class LinuxPolicy(Policy):
             f"/usr/lib/modules/{release}/modules.builtin"
         )
         try:
-            with open(builtins, "r") as mfile:
+            with open(builtins, "r", encoding='utf-8') as mfile:
                 for line in mfile:
                     kmod = line.split('/')[-1].split('.ko')[0]
                     self.kernel_mods.append(kmod)
@@ -283,7 +291,7 @@ class LinuxPolicy(Policy):
 
         kconfigs = []
         try:
-            with open(booted_config, "r") as kfile:
+            with open(booted_config, "r", encoding='utf-8') as kfile:
                 for line in kfile:
                     if '=y' in line:
                         kconfigs.append(line.split('=y')[0])
@@ -327,16 +335,13 @@ class LinuxPolicy(Policy):
         # set or query for case id
         if not cmdline_opts.batch and not \
                 cmdline_opts.quiet:
-            try:
-                if caseid:
-                    self.commons['cmdlineopts'].case_id = caseid
-                else:
-                    self.commons['cmdlineopts'].case_id = input(
-                        _("Optionally, please enter the case id that you are "
-                          "generating this report for [%s]: ") % caseid
-                    )
-            except KeyboardInterrupt:
-                raise
+            if caseid:
+                self.commons['cmdlineopts'].case_id = caseid
+            else:
+                self.commons['cmdlineopts'].case_id = input(
+                    _("Optionally, please enter the case id that you are "
+                      "generating this report for [%s]: ") % caseid
+                )
         if cmdline_opts.case_id:
             self.case_id = cmdline_opts.case_id
 
@@ -344,20 +349,17 @@ class LinuxPolicy(Policy):
         # setting case id, as below methods might rely on detection of it
         if not cmdline_opts.batch and not \
                 cmdline_opts.quiet:
-            try:
-                # Policies will need to handle the prompts for user information
-                if cmdline_opts.upload and self.get_upload_url() and \
-                        not cmdline_opts.upload_protocol == 's3':
-                    self.prompt_for_upload_user()
-                    self.prompt_for_upload_password()
-                elif cmdline_opts.upload_protocol == 's3':
-                    self.prompt_for_upload_s3_bucket()
-                    self.prompt_for_upload_s3_endpoint()
-                    self.prompt_for_upload_s3_access_key()
-                    self.prompt_for_upload_s3_secret_key()
-                self.ui_log.info('')
-            except KeyboardInterrupt:
-                raise
+            # Policies will need to handle the prompts for user information
+            if cmdline_opts.upload and self.get_upload_url() and \
+                    not cmdline_opts.upload_protocol == 's3':
+                self.prompt_for_upload_user()
+                self.prompt_for_upload_password()
+            elif cmdline_opts.upload_protocol == 's3':
+                self.prompt_for_upload_s3_bucket()
+                self.prompt_for_upload_s3_endpoint()
+                self.prompt_for_upload_s3_access_key()
+                self.prompt_for_upload_s3_secret_key()
+            self.ui_log.info('')
 
     def _configure_low_priority(self):
         """Used to constrain sos to a 'low priority' execution, potentially
@@ -529,12 +531,12 @@ class LinuxPolicy(Policy):
             'https': self.upload_https,
             's3': self.upload_s3
         }
-        if self.commons['cmdlineopts'].upload_protocol in prots.keys():
+        if self.commons['cmdlineopts'].upload_protocol in prots:
             return prots[self.commons['cmdlineopts'].upload_protocol]
         if '://' not in self.upload_url:
             raise Exception("Must provide protocol in upload URL")
         prot, _ = self.upload_url.split('://')
-        if prot not in prots.keys():
+        if prot not in prots:
             raise Exception(f"Unsupported or unrecognized protocol: {prot}")
         return prots[prot]
 
@@ -708,9 +710,9 @@ class LinuxPolicy(Policy):
         ret = pexpect.spawn(sftp_cmd, encoding='utf-8')
 
         sftp_expects = [
-            u'sftp>',
-            u'password:',
-            u'Connection refused',
+            'sftp>',
+            'password:',
+            'Connection refused',
             pexpect.TIMEOUT,
             pexpect.EOF
         ]
@@ -722,8 +724,8 @@ class LinuxPolicy(Policy):
         elif idx == 1:
             ret.sendline(password)
             pass_expects = [
-                u'sftp>',
-                u'Permission denied',
+                'sftp>',
+                'Permission denied',
                 pexpect.TIMEOUT,
                 pexpect.EOF
             ]
@@ -752,10 +754,10 @@ class LinuxPolicy(Policy):
         ret.sendline(put_cmd)
 
         put_expects = [
-            u'100%',
+            '100%',
             pexpect.TIMEOUT,
             pexpect.EOF,
-            u'No such file or directory'
+            'No such file or directory'
         ]
 
         put_success = ret.expect(put_expects, timeout=180)
@@ -793,7 +795,7 @@ class LinuxPolicy(Policy):
         """
         return requests.put(self.get_upload_url(), data=archive,
                             auth=self.get_upload_https_auth(),
-                            verify=verify)
+                            verify=verify, timeout=TIMEOUT_DEFAULT)
 
     def _get_upload_headers(self):
         """Define any needed headers to be passed with the POST request here
@@ -813,7 +815,7 @@ class LinuxPolicy(Policy):
         }
         return requests.post(self.get_upload_url(), files=files,
                              auth=self.get_upload_https_auth(),
-                             verify=verify)
+                             verify=verify, timeout=TIMEOUT_DEFAULT)
 
     def upload_https(self):
         """Attempts to upload the archive to an HTTPS location.
@@ -1069,5 +1071,12 @@ class GenericLinuxPolicy(LinuxPolicy):
                    'users are encouraged to request a new distribution-specifc'
                    ' policy at the GitHub project above.\n')
 
+    @classmethod
+    def check(cls, remote=''):
+        """
+        This function is responsible for determining if the underlying system
+        is supported by this policy.
+        """
+        raise NotImplementedError
 
 # vim: set et ts=4 sw=4 :
