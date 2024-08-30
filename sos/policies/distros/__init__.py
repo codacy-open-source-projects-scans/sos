@@ -643,11 +643,16 @@ class LinuxPolicy(Policy):
             self._upload_url = f"s3://{bucket}/{prefix}"
         return self.upload_url or self._upload_url
 
+    def _get_obfuscated_upload_url(self, url):
+        pattern = r"([^:]+://[^:]+:)([^@]+)(@.+)"
+        obfuscated_url = re.sub(pattern, r'\1********\3', url)
+        return obfuscated_url
+
     def get_upload_url_string(self):
         """Used by distro policies to potentially change the string used to
         report upload location from the URL to a more human-friendly string
         """
-        return self.get_upload_url()
+        return self._get_obfuscated_upload_url(self.get_upload_url())
 
     def get_upload_user(self):
         """Helper function to determine if we should use the policy default
@@ -693,9 +698,9 @@ class LinuxPolicy(Policy):
         # via ssh python bindings commonly available among downstreams
         try:
             import pexpect
-        except ImportError:
+        except ImportError as err:
             raise Exception('SFTP upload requires python3-pexpect, which is '
-                            'not currently installed')
+                            'not currently installed') from err
 
         sftp_connected = False
 
@@ -869,13 +874,8 @@ class LinuxPolicy(Policy):
 
         :raises: ``Exception`` if upload in unsuccessful
         """
-        try:
-            import ftplib
-            import socket
-        except ImportError:
-            # socket is part of the standard library, should only fail here on
-            # ftplib
-            raise Exception("missing python ftplib library")
+        import ftplib
+        import socket
 
         if not url:
             url = self.get_upload_url()
@@ -900,31 +900,28 @@ class LinuxPolicy(Policy):
                 raise Exception("connection failed, did you set a user and "
                                 "password?")
             session.cwd(directory)
-        except socket.timeout:
-            raise Exception(f"timeout hit while connecting to {url}")
-        except socket.gaierror:
-            raise Exception(f"unable to connect to {url}")
+        except socket.timeout as err:
+            raise Exception(f"timeout hit while connecting to {url}") from err
+        except socket.gaierror as err:
+            raise Exception(f"unable to connect to {url}") from err
         except ftplib.error_perm as err:
             errno = str(err).split()[0]
             if errno == '503':
-                raise Exception(f"could not login as '{user}'")
+                raise Exception(f"could not login as '{user}'") from err
             if errno == '530':
-                raise Exception(f"invalid password for user '{user}'")
+                raise Exception(f"invalid password for user '{user}'") from err
             if errno == '550':
                 raise Exception("could not set upload directory to "
-                                f"{directory}")
-            raise Exception(f"error trying to establish session: {str(err)}")
+                                f"{directory}") from err
+            raise Exception(f"error trying to establish session: {str(err)}") \
+                from err
 
-        try:
-            with open(self.upload_archive_name, 'rb') as _arcfile:
-                session.storbinary(
-                    f"STOR {self.upload_archive_name.split('/')[-1]}",
-                    _arcfile
+        with open(self.upload_archive_name, 'rb') as _arcfile:
+            session.storbinary(
+                f"STOR {self.upload_archive_name.split('/')[-1]}", _arcfile
                 )
-            session.quit()
-            return True
-        except IOError:
-            raise Exception("could not open archive file")
+        session.quit()
+        return True
 
     def upload_s3(self, endpoint=None, region=None, bucket=None, prefix=None,
                   access_key=None, secret_key=None):
