@@ -3,12 +3,11 @@ Name: sos
 Version: 4.8.0
 Release: 1%{?dist}
 Source0: https://github.com/sosreport/sos/archive/%{name}-%{version}.tar.gz
-License: GPL-2.0
+License: GPL-2.0-only
 BuildArch: noarch
 Url: https://github.com/sosreport/sos
 BuildRequires: python3-devel
 BuildRequires: python3-setuptools
-Requires: python3-rpm
 Requires: python3-pexpect
 %if 0%{?rhel} && 0%{?rhel} < 10
 Requires: python3-setuptools
