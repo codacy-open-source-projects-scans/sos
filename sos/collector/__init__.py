@@ -88,6 +88,7 @@ class SoSCollector(SoSComponent):
         'encrypt_pass': '',
         'group': None,
         'image': '',
+        'inherit_config_file': False,
         'force_pull_image': True,
         'skip_cleaning_files': [],
         'jobs': 4,
@@ -102,6 +103,7 @@ class SoSCollector(SoSComponent):
         'map_file': '/etc/sos/cleaner/default_mapping',
         'primary': '',
         'namespaces': None,
+        'node_config_file': None,
         'nodes': [],
         'no_env_vars': False,
         'no_local': False,
@@ -362,6 +364,14 @@ class SoSCollector(SoSComponent):
                                  dest='become_root',
                                  help='Become root on the remote nodes')
         collect_grp.add_argument('--case-id', help='Specify case number')
+        collect_grp.add_argument('--inherit-config-file', default=False,
+                                 action='store_true',
+                                 help='Use the config file from the collector '
+                                      'for all nodes to use with sos report')
+        collect_grp.add_argument('--node-config-file', type=str,
+                                 default=None,
+                                 help='Path to an existing config file on the '
+                                 'nodes to use with sos report')
         collect_grp.add_argument('--cluster-type',
                                  help='Specify a type of cluster profile')
         collect_grp.add_argument('-c', '--cluster-option',
@@ -1193,6 +1203,14 @@ this utility or remote systems that it connects to.
             self.exit()
 
         self.intro()
+
+        if self.opts.batch and self.opts.password:
+            self.exit(
+                "\nsos-collector was called with incompatible options --batch "
+                "and --password.\nIf you need to use --password,"
+                " please omit batch mode.\n",
+                1
+            )
 
         self.configure_sos_cmd()
         self.prep()

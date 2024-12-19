@@ -51,6 +51,8 @@ class SosNode():
         self.hostlen = commons['hostlen']
         self.need_sudo = commons['need_sudo']
         self.sos_options = commons['sos_options']
+        self.node_config_file = self.opts.node_config_file
+        self.inherit_config_file = self.opts.inherit_config_file
         self.local = False
         self.host = None
         self.cluster = None
@@ -277,6 +279,9 @@ class SosNode():
         """If we need to provide a sudo or root password to a command, then
         here we prefix the command with the correct bits
         """
+        is_root = self._env_vars.get("USER", os.environ.get("USER")) == 'root'
+        if self.local and is_root:
+            return cmd
         if self.opts.become_root:
             return f"su -c {quote(cmd)}"
         if self.need_sudo:
@@ -367,7 +372,8 @@ class SosNode():
             for line in result.splitlines():
                 if not is_list:
                     try:
-                        res.append(line.split()[0])
+                        if ls := line.split():
+                            res.append(ls[0])
                     except Exception as err:
                         self.log_debug(f"Error parsing sos help: {err}")
                 else:
@@ -758,6 +764,21 @@ class SosNode():
         try:
             path = False
             checksum = False
+            config_file_arg = ''
+            if self.opts.node_config_file:
+                config_file_arg = f'--config-file={self.opts.node_config_file}'
+            elif self.opts.inherit_config_file:
+                if not self.local:
+                    remote_config = f"/tmp/{self.tmpdir.split('/')[-1]}.conf"
+                    self._transport.copy_file_to_remote(
+                        self.opts.config_file,
+                        remote_config)
+                    config_file_arg = f'--config-file={remote_config}'
+                else:
+                    config_file_arg = (
+                        f'--config-file={self.opts.config_file}')
+            if config_file_arg:
+                self.sos_cmd = f"{self.sos_cmd} {config_file_arg}"
             res = self.run_command(self.sos_cmd,
                                    timeout=self.opts.timeout,
                                    use_shell=True,

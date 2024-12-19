@@ -39,6 +39,7 @@ class SunbeamHypervisor(Plugin, UbuntuPlugin):
             f'{self.common_dir}/etc/libvirt/passwd.db',
             f'{self.common_dir}/etc/libvirt/krb5.tab',
             f'{self.common_dir}/var/log/ovn/',
+            f'{self.common_dir}/etc/pki/',
         ])
 
     def postproc(self):
@@ -65,13 +66,20 @@ class SunbeamHypervisor(Plugin, UbuntuPlugin):
         ]
         connection_keys = ["connection", "sql_connection"]
 
+        openstack_folders = [
+            "nova",
+            "neutron",
+            "ceilometer",
+            "masakarimonitors",
+        ]
+
         self.do_path_regex_sub(
-            fr"{self.common_dir}/etc/(nova|neutron|ceilometer)/*",
+            fr'{self.common_dir}/etc/({"|".join(openstack_folders)})/*',
             fr'(^\s*({"|".join(protect_keys)})\s*=\s*)(.*)',
             r"\1*********"
         )
         self.do_path_regex_sub(
-            fr"{self.common_dir}/etc/(nova|neutron|ceilometer)/*",
+            fr'{self.common_dir}/etc/({"|".join(openstack_folders)})/*',
             fr'(^\s*({"|".join(connection_keys)})\s*=\s*(.*)'
             r'://(\w*):)(.*)(@(.*))',
             r"\1*********\6"
@@ -87,6 +95,7 @@ class SunbeamHypervisor(Plugin, UbuntuPlugin):
             "ovn_cacert",
             "ovn_cert",
             "ovn_key",
+            "url",
         ]
 
         self.do_file_sub(

@@ -91,11 +91,10 @@ class Foreman(Plugin):
         _host_f = self.exec_cmd('hostname -f')['output']
         _host_f = _host_f.strip()
 
-        # Collect these completely everytime
         self.add_copy_spec([
             "/var/log/foreman/production.log",
             f"/var/log/{self.apachepkg}*/foreman-ssl_*_ssl.log"
-        ], sizelimit=0)
+        ], sizelimit=500)
 
         # Allow limiting these
         self.add_copy_spec([
@@ -328,6 +327,15 @@ class Foreman(Plugin):
             r"/etc/foreman/(.*)((yaml|yml)(.*)?)",
             r"((\:|\s*)(passw|cred|token|secret|key).*(\:\s|=))(.*)",
             r'\1"********"')
+        # hide proxy credentials..
+        self.do_paths_http_sub([
+            '/var/log/foreman/production.log*',
+        ])
+        # hide proxy credentials from http_proxy setting
+        self.do_cmd_output_sub(
+            "from settings where",
+            r"(http(s)?://)\S+:\S+(@.*)",
+            r"\1******:******\3")
 
 # Let the base Foreman class handle the string substitution of the apachepkg
 # attr so we can keep all log definitions centralized in the main class

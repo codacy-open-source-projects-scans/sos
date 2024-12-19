@@ -41,7 +41,8 @@ class Process(Plugin, IndependentPlugin):
             "/proc/sched_debug",
             "/proc/stat",
             "/sys/kernel/debug/sched/debug",
-            "/sys/kernel/debug/sched/features"
+            "/sys/kernel/debug/sched/features",
+            "/sys/kernel/sched_ext/",
         ])
 
         procs = [p for p in self.listdir("/proc") if re.match("[0-9]", p)]
@@ -75,6 +76,7 @@ class Process(Plugin, IndependentPlugin):
 
         self.add_cmd_output([
             "ps alxwww",
+            "ps auxfwww",
             "ps -elfL"
         ], cmd_as_tag=True)
 

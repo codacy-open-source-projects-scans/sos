@@ -36,6 +36,7 @@ except ImportError:
 
 try:
     import boto3
+    from botocore.config import Config as BotocoreConfig
     BOTO3_LOADED = True
 except ImportError:
     BOTO3_LOADED = False
@@ -163,7 +164,10 @@ class LinuxPolicy(Policy):
         if remote:
             return _check_release(remote)
         # use the os-specific file primarily
-        if os.path.isfile(cls.os_release_file):
+        # also check the symlink destination
+        if (os.path.isfile(cls.os_release_file) and
+            os.path.basename(cls.os_release_file)
+                == os.path.basename(os.path.realpath(cls.os_release_file))):
             return True
         # next check os-release for a NAME or ID value we expect
         with open(OS_RELEASE, "r", encoding='utf-8') as f:
@@ -997,10 +1001,13 @@ class LinuxPolicy(Policy):
         if not secret_key:
             secret_key = self.get_upload_s3_secret_key()
 
+        boto3_config = BotocoreConfig(user_agent_extra='app/sos')
+
         s3_client = boto3.client('s3', endpoint_url=endpoint,
                                  region_name=region,
                                  aws_access_key_id=access_key,
-                                 aws_secret_access_key=secret_key)
+                                 aws_secret_access_key=secret_key,
+                                 config=boto3_config)
 
         try:
             key = prefix + self.upload_archive_name.split('/')[-1]
