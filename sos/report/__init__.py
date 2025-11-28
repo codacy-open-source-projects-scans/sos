@@ -27,7 +27,7 @@ from shutil import rmtree
 import sos.report.plugins
 from sos.utilities import (ImporterHelper, SoSTimeoutError, bold,
                            sos_get_command_output, TIMEOUT_DEFAULT, listdir,
-                           is_executable)
+                           is_executable, scrub_url_credential)
 
 from sos import _sos as _
 from sos import __version__
@@ -37,6 +37,7 @@ from sos.report.reporting import (Report, Section, Command, CopiedFile,
                                   CreatedFile, Alert, Note, PlainTextReport,
                                   JSONReport, HTMLReport)
 from sos.cleaner import SoSCleaner
+from sos.upload import SoSUpload
 
 # file system errors that should terminate a run
 fatal_fs_errors = (errno.ENOSPC, errno.EROFS)
@@ -70,6 +71,12 @@ def _format_since(date):
 
 # valid modes for --chroot
 chroot_modes = ["auto", "always", "never"]
+
+# collect default env vars
+default_env_vars = {
+    'http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY',
+    'NO_PROXY', 'ALL_PROXY'
+}
 
 
 class SoSReport(SoSComponent):
@@ -140,8 +147,10 @@ class SoSReport(SoSComponent):
         'upload_s3_access_key': None,
         'upload_s3_secret_key': None,
         'upload_s3_object_prefix': None,
+        'upload_target': None,
         'add_preset': '',
-        'del_preset': ''
+        'del_preset': '',
+        'treat_certificates': 'obfuscate'
     }
 
     def __init__(self, parser, args, cmdline):
@@ -149,7 +158,7 @@ class SoSReport(SoSComponent):
         self.loaded_plugins = []
         self.skipped_plugins = []
         self.all_options = []
-        self.env_vars = set()
+        self.env_vars = default_env_vars
         self._args = args
         self.sysroot = "/"
         self.estimated_plugsizes = {}
@@ -388,6 +397,15 @@ class SoSReport(SoSComponent):
         cleaner_grp.add_argument('--usernames', dest='usernames', default=[],
                                  action='extend',
                                  help='List of usernames to obfuscate')
+        cleaner_grp.add_argument('--treat-certificates', default='obfuscate',
+                                 choices=['obfuscate', 'keep', 'remove'],
+                                 dest='treat_certificates',
+                                 help=(
+                                    'How to treat the certificate files '
+                                    '[.csr .crt .pem]. Defaults to "obfuscate"'
+                                    ' after convert the file to text. '
+                                    ' "Key" certificate files are always '
+                                    'removed.'))
 
     @classmethod
     def display_help(cls, section):
@@ -445,7 +463,7 @@ class SoSReport(SoSComponent):
         ssec.add_text(helpln)
 
     def print_header(self):
-        print(f"\n{_(f'sos report (version {__version__})')}\n")
+        self.ui_log.info(f"\n{_(f'sos report (version {__version__})')}\n")
 
     def _get_hardware_devices(self):
         self.devices = {
@@ -914,17 +932,17 @@ class SoSReport(SoSComponent):
                     val = True
 
                 if isinstance(val, str):
-                    val = val.lower()
-                    if val in ["on", "enable", "enabled", "true", "yes"]:
+                    arg = val.lower()
+                    if arg in ["on", "enable", "enabled", "true", "yes"]:
                         val = True
-                    elif val in ["off", "disable", "disabled", "false", "no"]:
+                    elif arg in ["off", "disable", "disabled", "false", "no"]:
                         val = False
                     else:
                         # try to convert string "val" to int()
                         try:
-                            val = int(val)
+                            val = int(arg)
                         except ValueError:
-                            # not a number to convert back to int from argparse
+                            # Value is a string argument to be used unmodified
                             pass
 
                 try:
@@ -1039,7 +1057,7 @@ class SoSReport(SoSComponent):
                                "disabled:"))
             self.ui_log.info("")
             for (plugname, plugclass, reason) in self.skipped_plugins:
-                self.ui_log.info(f" {plugname:<20} {reason:<14} "
+                self.ui_log.info(f" {plugname:<30} {reason:<14} "
                                  f"{plugclass.get_description()}")
 
         self.ui_log.info("")
@@ -1080,7 +1098,7 @@ class SoSReport(SoSComponent):
                 if tmpopt is None:
                     tmpopt = 0
 
-                self.ui_log.info(f" {f'{opt.plugin}.{opt.name}':<25} "
+                self.ui_log.info(f" {f'{opt.plugin}.{opt.name}':<35} "
                                  f"{tmpopt:<15} {opt.desc}")
         else:
             self.ui_log.info(_("No plugin options available."))
@@ -1420,7 +1438,7 @@ class SoSReport(SoSComponent):
         if not self.env_vars:
             return
         env = '\n'.join([
-            f"{name}={val}" for (name, val) in
+            f"{name}={scrub_url_credential(val)}" for (name, val) in
             [(name, f'{os.environ.get(name)}') for name in self.env_vars if
              os.environ.get(name) is not None]
         ]) + '\n'
@@ -1563,13 +1581,10 @@ class SoSReport(SoSComponent):
         # Now, separately clean the log files that cleaner also wrote to
         if do_clean:
             _dir = os.path.join(self.tmpdir, self.archive._name)
-            cleaner.obfuscate_file(os.path.join(_dir, 'sos_logs', 'sos.log'),
-                                   short_name='sos.log')
-            cleaner.obfuscate_file(os.path.join(_dir, 'sos_logs', 'ui.log'),
-                                   short_name='ui.log')
+            cleaner.obfuscate_file(os.path.join(_dir, 'sos_logs', 'sos.log'))
+            cleaner.obfuscate_file(os.path.join(_dir, 'sos_logs', 'ui.log'))
             cleaner.obfuscate_file(
-                os.path.join(_dir, 'sos_reports', 'manifest.json'),
-                short_name='manifest.json'
+                    os.path.join(_dir, 'sos_reports', 'manifest.json')
             )
 
         # Now, just (optionally) pack the report and print work outcome; let
@@ -1717,7 +1732,20 @@ class SoSReport(SoSComponent):
                 or self.opts.upload_s3_endpoint):
             if not self.opts.build:
                 try:
-                    self.policy.upload_archive(archive)
+                    hook_commons = {
+                        'policy': self.policy,
+                        'tmpdir': self.tmpdir,
+                        'sys_tmp': self.sys_tmp,
+                        'options': self.opts,
+                        'manifest': self.manifest
+                    }
+                    uploader = SoSUpload(parser=self.parser,
+                                         args=self.args,
+                                         cmdline=self.cmdline,
+                                         in_place=True,
+                                         hook_commons=hook_commons,
+                                         archive=archive)
+                    uploader.execute()
                     self.ui_log.info(_("Uploaded archive successfully"))
                 except Exception as err:
                     self.ui_log.error(f"Upload attempt failed: {err}")

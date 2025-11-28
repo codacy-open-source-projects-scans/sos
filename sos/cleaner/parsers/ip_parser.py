@@ -36,6 +36,7 @@ class SoSIPParser(SoSCleanerParser):
         'sos_commands/yum/.*list.*',
         'sos_commands/snappy/snap_list_--all',
         'sos_commands/vulkan/vulkaninfo',
+        'etc/rhsm/facts/satellite.facts',
         'var/log/.*dnf.*',
         'var/log/.*packag.*',  # get 'packages' and 'packaging' logs
         '.*(version|release)(\\.txt)?$',  # obvious version files
@@ -44,6 +45,6 @@ class SoSIPParser(SoSCleanerParser):
     map_file_key = 'ip_map'
     compile_regexes = False
 
-    def __init__(self, config, skip_cleaning_files=[]):
-        self.mapping = SoSIPMap()
+    def __init__(self, config, workdir, skip_cleaning_files=[]):
+        self.mapping = SoSIPMap(workdir)
         super().__init__(config, skip_cleaning_files)

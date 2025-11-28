@@ -133,7 +133,8 @@ class Foreman(Plugin):
 
         self.add_dir_listing([
             '/root/ssl-build',
-            '/usr/share/foreman/config/hooks'
+            '/usr/share/foreman/config/hooks',
+            '/var/lib/foreman/red_hat_inventory',
         ], recursive=True)
 
         self.add_cmd_output(
@@ -222,6 +223,14 @@ class Foreman(Plugin):
             f'foreman_tasks_tasks.started_at > NOW() - interval {interval} '
             'order by foreman_tasks_tasks.started_at asc')
 
+        subnetscmd = (
+            'SELECT id,network,mask,name,vlanid,gateway,'
+            'dns_primary,dns_secondary,boot_mode,ipam,type,description,'
+            'mtu,template_id,nic_delay,externalipam_id,'
+            'externalipam_group,dhcp_id,tftp_id,dns_id,discovery_id,'
+            'httpboot_id,externalipam_id FROM subnets ORDER BY id DESC'
+        )
+
         # counts of fact_names prefixes/types: much of one type suggests
         # performance issues
         factnamescmd = (
@@ -241,6 +250,7 @@ class Foreman(Plugin):
             'foreman_auth_table': 'select id,type,name,host,port,account,'
                                   'base_dn,attr_login,onthefly_register,tls '
                                   'from auth_sources',
+            'foreman_subnets_table': subnetscmd,
             'dynflow_schema_info': 'select * from dynflow_schema_info',
             'audits_table_count': 'select count(*) from audits',
             'logs_table_count': 'select count(*) from logs',
@@ -294,14 +304,6 @@ class Foreman(Plugin):
                     self.add_cmd_output(_cmd, suggest_filename=proxy[0],
                                         subdir='smart_proxies_features',
                                         timeout=10)
-
-        # collect http[|s]_proxy env.variables
-        self.add_env_var([
-            'HTTP_PROXY',
-            'HTTPS_PROXY',
-            'NO_PROXY',
-            'ALL_PROXY',
-        ])
 
     def build_query_cmd(self, query, csv=False, binary="psql"):
         """

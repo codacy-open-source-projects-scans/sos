@@ -10,6 +10,7 @@
 
 import pwd
 import json
+import re
 from sos.report.plugins import Plugin, UbuntuPlugin, PluginOpt
 
 
@@ -76,6 +77,8 @@ class Juju(Plugin, UbuntuPlugin):
         ),
     ]
 
+    agent_name = ""
+
     def setup(self):
         # Juju service names are not consistent through deployments,
         # so we need to use a wildcard to get the correct service names.
@@ -83,18 +86,25 @@ class Juju(Plugin, UbuntuPlugin):
             self.add_journal(service)
             self.add_service_status(service)
 
-        self.add_cmd_output([
-            'juju_engine_report',
-            'juju_goroutines',
-            'juju_heap_profile',
-            'juju_leases',
-            'juju_metrics',
-            'juju_pubsub_report',
-            'juju_presence_report',
-            'juju_statepool_report',
-            'juju_statetracker_report',
-            'juju_unit_status',
-        ])
+        juju_agent_cmds = {
+            'juju_engine_report': 'depengine',
+            'juju_goroutines': 'debug/pprof/goroutine?debug=1',
+            'juju_heap_profile': 'debug/pprof/heap?debug=1',
+            'juju_metrics': 'metrics',
+            'juju_pubsub_report': 'pubsub',
+            'juju_presence_report': 'presence',
+            'juju_statepool_report': 'statepool',
+            'juju_statetracker_report': ('debug/pprof/juju/state/tracker?'
+                                         'debug=1'),
+            'juju_unit_status': 'units?action=status',
+        }
+
+        if self.path_exists("/var/lib/juju/agents"):
+            for cmd, agent_cmd in juju_agent_cmds.items():
+                self.add_cmd_output(
+                    self._juju_agent(agent_cmd),
+                    suggest_filename=cmd
+                )
 
         # Get agent configs for each agent.
         self.add_copy_spec("/var/lib/juju/agents/*/agent.conf")
@@ -115,6 +125,7 @@ class Juju(Plugin, UbuntuPlugin):
                 "/var/lib/juju/**/.*",
             ])
             self.add_forbidden_path("/var/lib/juju/kvm")
+            self.add_forbidden_path("/var/lib/juju/tools")
         else:
             # We need this because we want to collect to the limit of all
             # logs in the directory.
@@ -185,6 +196,15 @@ class Juju(Plugin, UbuntuPlugin):
                         )
                         self.add_cmd_output(command, runas=juju_user)
 
+    def _juju_agent(self, command):
+        if self.agent_name == "":
+            for dir_name in self.listdir("/var/lib/juju/agents"):
+                if re.search('machine-*|controller-*|application-*', dir_name):
+                    self.agent_name = dir_name
+                    break
+
+        return f"juju-introspect --agent={self.agent_name} {command}"
+
     def postproc(self):
         agents_path = "/var/lib/juju/agents/*"
         protect_keys = [
@@ -198,6 +218,11 @@ class Juju(Plugin, UbuntuPlugin):
         keys_regex = fr"(^\s*({'|'.join(protect_keys)})\s*:\s*)(.*)"
         sub_regex = r"\1*********"
         self.do_path_regex_sub(agents_path, keys_regex, sub_regex)
+
+        # Redact keys from Nova compute logs
+        self.do_path_regex_sub("/var/log/juju/unit-nova-compute-(.*).log(.*)",
+                               r"auth\(key=(.*)\)", r"auth(key=******)")
+
         # Redact certificates
         self.do_file_private_sub(agents_path)
         self.do_cmd_private_sub('juju controllers')

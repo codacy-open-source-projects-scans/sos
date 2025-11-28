@@ -8,6 +8,8 @@
 
 from sos.report.plugins import (Plugin, RedHatPlugin, UbuntuPlugin,
                                 DebianPlugin, SoSPredicate, PluginOpt)
+from sos.policies.distros.ubuntu import UbuntuPolicy
+from sos.policies.distros.debian import DebianPolicy
 
 
 class Networking(Plugin):
@@ -60,6 +62,7 @@ class Networking(Plugin):
             "/etc/network*",
             "/etc/nsswitch.conf",
             "/etc/resolv.conf",
+            "/etc/gai.conf",
             "/etc/xinetd.conf",
             "/etc/xinetd.d",
             "/etc/yp.conf",
@@ -68,6 +71,8 @@ class Networking(Plugin):
             "/sys/class/net/*/flags",
             "/sys/class/net/*/statistics/",
             "/etc/nmstate/",
+            "/var/lib/lldpad/",
+            "/etc/services",
         ])
 
         self.add_forbidden_path([
@@ -93,6 +98,7 @@ class Networking(Plugin):
         self.add_cmd_output([
             "nstat -zas",
             "netstat -s",
+            "netstat -s -6",
             f"netstat {self.ns_wide} -agn",
             "networkctl status -a",
             "ip -6 route show table all",
@@ -194,6 +200,7 @@ class Networking(Plugin):
                                required={'kmods': 'all'})
         self.add_cmd_output(ss_cmd, pred=ss_pred, changes=True)
 
+        self.add_cmd_output("ss -s")
         # Get ethtool output for every device that does not exist in a
         # namespace.
         _ecmds = [f"ethtool -{opt}" for opt in self.ethtool_shortopts]
@@ -206,6 +213,8 @@ class Networking(Plugin):
             "ethtool --phy-statistics %(dev)s",
             "ethtool --show-priv-flags %(dev)s",
             "ethtool --show-eee %(dev)s",
+            "ethtool --show-fec %(dev)s",
+            "ethtool --show-ntuple %(dev)s",
             "tc -s filter show dev %(dev)s",
             "tc -s filter show dev %(dev)s ingress",
         ], devices="ethernet")
@@ -323,14 +332,16 @@ class UbuntuNetworking(Networking, UbuntuPlugin, DebianPlugin):
 
     def setup(self):
 
-        ubuntu_jammy_and_after_ss_kmods = ['tcp_diag', 'udp_diag',
-                                           'inet_diag', 'unix_diag',
-                                           'netlink_diag', 'af_packet_diag',
-                                           'xsk_diag', 'mptcp_diag',
-                                           'raw_diag']
+        common_ss_kmods = ['af_packet_diag', 'inet_diag', 'mptcp_diag',
+                           'netlink_diag', 'raw_diag', 'tcp_diag', 'udp_diag',
+                           'unix_diag']
 
-        if self.policy.dist_version() >= 22.04:
-            self.ss_kmods = ubuntu_jammy_and_after_ss_kmods
+        if (isinstance(self.policy, UbuntuPolicy) and
+                self.policy.dist_version() >= 22.04):
+            self.ss_kmods = common_ss_kmods + ['xsk_diag']
+        elif (isinstance(self.policy, DebianPolicy) and
+                self.policy.dist_version() >= 13):
+            self.ss_kmods = common_ss_kmods + ['vsock_diag']
 
         super().setup()
 
@@ -343,6 +354,14 @@ class UbuntuNetworking(Networking, UbuntuPlugin, DebianPlugin):
             "/lib/netplan/*.yaml",
             "/run/netplan/*.yaml",
             "/run/systemd/network"
+        ])
+
+        # Netplan only consumes files with the `.yaml` extension (LP#1815734),
+        # so give visibility on other files that might be present.
+        self.add_dir_listing([
+            "/etc/netplan",
+            "/lib/netplan",
+            "/run/netplan",
         ])
 
     def postproc(self):

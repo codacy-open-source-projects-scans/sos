@@ -14,7 +14,7 @@
 This module houses the i18n setup and message function. The default is to use
 gettext to internationalize messages.
 """
-__version__ = "4.8.2"
+__version__ = "4.10.1"
 
 import os
 import sys
@@ -54,10 +54,12 @@ class SoS():
         import sos.report
         import sos.cleaner
         import sos.help
+        import sos.upload
         self._components = {
             'report': (sos.report.SoSReport, ['rep']),
             'clean': (sos.cleaner.SoSCleaner, ['cleaner', 'mask']),
-            'help': (sos.help.SoSHelper, [])
+            'help': (sos.help.SoSHelper, []),
+            'upload': (sos.upload.SoSUpload, [])
         }
         # some distros do not want pexpect as a default dep, so try to load
         # collector here, and if it fails add an entry that implies it is at

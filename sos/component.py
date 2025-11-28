@@ -16,6 +16,7 @@ import tempfile
 import sys
 import time
 
+from textwrap import fill
 from argparse import SUPPRESS
 from datetime import datetime
 from getpass import getpass
@@ -167,10 +168,7 @@ class SoSComponent():
         if self.opts.tmp_dir:
             tmpdir = os.path.abspath(self.opts.tmp_dir)
         else:
-            tmpdir = os.getenv('TMPDIR', None) or '/var/tmp'
-
-        if os.getenv('HOST', None) and os.getenv('container', None):
-            tmpdir = os.path.join(os.getenv('HOST'), tmpdir.lstrip('/'))
+            tmpdir = os.getenv('TMPDIR', None) or self.policy.get_tmp_dir(None)
 
         # no standard library method exists for this, so call out to stat to
         # avoid bringing in a dependency on psutil
@@ -243,7 +241,20 @@ class SoSComponent():
                         setattr(opts, oopt, [x for x in getattr(opts, oopt)
                                 if x not in common])
 
-            if val != opts.arg_defaults[opt]:
+            # plugin options as a list should be concatenated, not overriden
+            # BUT if cmdline plugoption overrides same option in opts, we must
+            # drop the opts's value; since the items are in form
+            # 'apache.log=on', we must separate the *name* of each option
+            if opt == 'plugopts':
+                oplugopts = getattr(opts, opt)
+                valnames = [v.split('=')[0] for v in val]
+                ovalnames = [v.split('=')[0] for v in oplugopts]
+                for common in set(valnames) & set(ovalnames):
+                    cstring = f"{common}="
+                    oplugopts = [oopt for oopt in oplugopts
+                                 if not oopt.startswith(cstring)]
+                setattr(opts, opt, list(set(val) | set(oplugopts)))
+            elif val != opts.arg_defaults[opt]:
                 setattr(opts, opt, val)
 
         return opts
@@ -289,7 +300,7 @@ class SoSComponent():
             if not self.preset:
                 self.preset = self.policy.probe_preset()
             # now merge preset options to opts
-            opts.merge(self.preset.opts)
+            opts.merge(self.preset.opts, prefer_new=True)
             # re-apply any cmdline overrides to the preset
             opts = self.apply_options_from_cmdline(opts)
 
@@ -457,6 +468,13 @@ class SoSComponent():
 
     def get_temp_file(self):
         return self.tempfile_util.new()
+
+    def _fmt_msg(self, msg):
+        width = 80
+        _fmt = ''
+        for line in msg.splitlines():
+            _fmt = _fmt + fill(line, width, replace_whitespace=False) + '\n'
+        return _fmt
 
 
 class SoSMetadata():

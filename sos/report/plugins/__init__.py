@@ -16,8 +16,9 @@ import contextlib
 import os
 import glob
 import re
+import signal
 import stat
-from time import time
+from time import time, sleep
 import logging
 import fnmatch
 import errno
@@ -531,6 +532,7 @@ class Plugin():
     kernel_mods = ()
     services = ()
     containers = ()
+    runtime = None
     architectures = None
     archive = None
     profiles = ()
@@ -1668,7 +1670,8 @@ class Plugin():
                 self.manifest.files.append(manifest_data)
 
     def add_copy_spec(self, copyspecs, sizelimit=None, maxage=None,
-                      tailit=True, pred=None, tags=[], container=None):
+                      tailit=True, pred=None, tags=[], container=None,
+                      runas=None):
         """Add a file, directory, or globs matching filepaths to the archive
 
         :param copyspecs: Files, directories, or globs matching filepaths
@@ -1695,6 +1698,10 @@ class Plugin():
 
         :param container: Container(s) from which this file should be copied
         :type container: ``str`` or a ``list`` of strings
+
+        :param runas: When collecting data from a container, run it under this
+                      user.
+        :type runas: ``str``
 
         `copyspecs` will be expanded and/or globbed as appropriate. Specifying
         a directory here will cause the plugin to attempt to collect the entire
@@ -1805,14 +1812,14 @@ class Plugin():
                 if isinstance(container, str):
                     container = [container]
                 for con in container:
-                    if not self.container_exists(con):
+                    if not self.container_exists(con) and runas is None:
                         continue
                     _tail = False
                     if sizelimit:
                         # to get just the size, stat requires a literal '%s'
                         # which conflicts with python string formatting
                         cmd = f"stat -c %s {copyspec}"
-                        ret = self.exec_cmd(cmd, container=con)
+                        ret = self.exec_cmd(cmd, container=con, runas=runas)
                         if ret['status'] == 0:
                             try:
                                 consize = int(ret['output'])
@@ -1832,7 +1839,7 @@ class Plugin():
                                 f"{ret['output']}")
                             continue
                     self.container_copy_paths.append(
-                        (con, copyspec, sizelimit, _tail, _spec_tags)
+                        (con, copyspec, sizelimit, _tail, _spec_tags, runas)
                     )
                     self._log_info(
                         f"added collection of '{copyspec}' from container "
@@ -2032,6 +2039,7 @@ class Plugin():
             kwargs['changes'] = False
         if (not getattr(SoSCommand(**kwargs), "snap_cmd", False) and
            (self.get_option('all_logs') or kwargs['sizelimit'] == 0)):
+            kwargs['sizelimit'] = 0
             kwargs['to_file'] = True
         if "snap_cmd" in kwargs:
             kwargs.pop("snap_cmd")
@@ -2057,7 +2065,7 @@ class Plugin():
     def add_dir_listing(self, paths, tree=False, recursive=False, chroot=True,
                         env=None, sizelimit=None, pred=None, subdir=None,
                         tags=[], runas=None, container=None,
-                        suggest_filename=None):
+                        suggest_filename=None, extra_opts=None):
         """
         Used as a way to standardize our collections of directory listings,
         either as an output of `ls` or `tree` depending on if the `tree`
@@ -2080,12 +2088,14 @@ class Plugin():
 
         if container:
             paths = [p for p in paths if
-                     self.container_path_exists(p, container=container)]
+                     self.container_path_exists(p, container=container,
+                                                runas=runas)]
         else:
             paths = [p for p in paths if self.path_exists(p)]
 
         if not tree:
-            options = f"alZ{'R' if recursive else ''}"
+            options = (f"alZ{'R' if recursive else ''}"
+                       f"{extra_opts if extra_opts else ''}")
         else:
             options = 'lp'
 
@@ -2103,7 +2113,8 @@ class Plugin():
                        sizelimit=None, pred=None, subdir=None,
                        changes=False, foreground=False, tags=[],
                        priority=10, cmd_as_tag=False, container=None,
-                       to_file=False, runas=None, snap_cmd=False):
+                       to_file=False, runas=None, snap_cmd=False,
+                       runtime=None):
         """Run a program or a list of programs and collect the output
 
         Output will be limited to `sizelimit`, collecting the last X amount
@@ -2182,6 +2193,9 @@ class Plugin():
 
         :param snap_cmd: Are the commands being run from a snap?
         :type snap_cmd: ``bool``
+
+        :param runtime: Specific runtime to use to run container cmd
+        :type runtime: ``str``
         """
         if isinstance(cmds, str):
             cmds = [cmds]
@@ -2196,7 +2210,8 @@ class Plugin():
             if container:
                 ocmd = cmd
                 container_cmd = (ocmd, container)
-                cmd = self.fmt_container_cmd(container, cmd)
+                cmd = self.fmt_container_cmd(container, cmd, runtime=runtime,
+                                             runas=runas)
                 if not cmd:
                     self._log_debug(f"Skipping command '{ocmd}' as the "
                                     f"requested container '{container}' does "
@@ -2372,7 +2387,7 @@ class Plugin():
                             binary=False, sizelimit=None, subdir=None,
                             changes=False, foreground=False, tags=[],
                             priority=10, cmd_as_tag=False, to_file=False,
-                            container_cmd=False, runas=None):
+                            tac=False, container_cmd=False, runas=None):
         """Execute a command and save the output to a file for inclusion in the
         report.
 
@@ -2400,6 +2415,7 @@ class Plugin():
             :param cmd_as_tag:          Format command string to tag
             :param to_file:             Write output directly to file instead
                                         of saving in memory
+            :param tac:                 Reverse log lines order
             :param runas:               Run the `cmd` as the `runas` user
 
         :returns:       dict containing status, output, and filename in the
@@ -2451,7 +2467,7 @@ class Plugin():
             cmd, timeout=timeout, stderr=stderr, chroot=root,
             chdir=runat, env=_env, binary=binary, sizelimit=sizelimit,
             poller=self.check_timeout, foreground=foreground,
-            to_file=out_file, runas=runas
+            to_file=out_file, tac=tac, runas=runas
         )
 
         end = time()
@@ -2489,7 +2505,7 @@ class Plugin():
                     result = sos_get_command_output(
                         cmd, timeout=timeout, chroot=False, chdir=runat,
                         env=env, binary=binary, sizelimit=sizelimit,
-                        poller=self.check_timeout, to_file=out_file
+                        poller=self.check_timeout, to_file=out_file, tac=tac,
                     )
                     run_time = time() - start
             self._log_debug(f"could not run '{cmd}': command not found")
@@ -2508,6 +2524,9 @@ class Plugin():
                            "truncated")
             linkfn = outfn
             outfn = outfn.replace('sos_commands', 'sos_strings') + '.tailed'
+            if out_file:
+                dest = self.archive.check_path(outfn, P_FILE, force=True)
+                os.rename(out_file, dest)
 
         if not to_file:
             if binary:
@@ -2541,7 +2560,8 @@ class Plugin():
             self.manifest.commands.append(manifest_cmd)
             if container_cmd:
                 self._add_container_cmd_to_manifest(manifest_cmd.copy(),
-                                                    container_cmd)
+                                                    container_cmd,
+                                                    suggest_filename)
         return result
 
     def collect_cmd_output(self, cmd, suggest_filename=None,
@@ -2623,7 +2643,7 @@ class Plugin():
     def exec_cmd(self, cmd, timeout=None, stderr=True, chroot=True,
                  runat=None, env=None, binary=False, pred=None,
                  foreground=False, container=False, quotecmd=False,
-                 runas=None):
+                 runas=None, runtime=None):
         """Execute a command right now and return the output and status, but
         do not save the output within the archive.
 
@@ -2668,6 +2688,10 @@ class Plugin():
         :param runas:               Run the `cmd` as the `runas` user
         :type runas: ``str``
 
+        :param runtime:             Specific runtime to use to execute the
+                                    container command
+        :type runtime: ``str``
+
         :returns:                   Command exit status and output
         :rtype: ``dict``
         """
@@ -2690,8 +2714,9 @@ class Plugin():
                 self._log_info(f"Cannot run cmd '{cmd}' in container "
                                f"{container}: no runtime detected on host.")
                 return _default
-            if self.container_exists(container):
-                cmd = self.fmt_container_cmd(container, cmd, quotecmd)
+            if self.container_exists(container, runtime) or runas is not None:
+                cmd = self.fmt_container_cmd(container, cmd, quotecmd,
+                                             runtime, runas)
             else:
                 self._log_info(f"Cannot run cmd '{cmd}' in container "
                                f"{container}: no such container is running.")
@@ -2725,7 +2750,7 @@ class Plugin():
             'tags': tags
         })
 
-    def _add_container_cmd_to_manifest(self, manifest, contup):
+    def _add_container_cmd_to_manifest(self, manifest, contup, suggest_fname):
         """Adds a command collection to the manifest for a particular container
         and creates a symlink to that collection from the relevant
         sos_containers/ location
@@ -2746,7 +2771,7 @@ class Plugin():
 
         _cdir = f"sos_containers/{container}/sos_commands/{self.name()}"
         _outloc = f"../../../../{manifest['filepath']}"
-        cmdfn = self._mangle_command(cmd)
+        cmdfn = suggest_fname if suggest_fname else self._mangle_command(cmd)
         conlnk = f"{_cdir}/{cmdfn}"
 
         # If check_path return None, it means that the sym link already exits,
@@ -2771,17 +2796,20 @@ class Plugin():
                     return self.policy.runtimes[pol_runtime]
         return None
 
-    def container_exists(self, name):
+    def container_exists(self, name, runtime=None):
         """If a container runtime is present, check to see if a container with
         a given name is currently running
 
         :param name:    The name or ID of the container to check presence of
         :type name: ``str``
 
+        :param runtime:    The runtime to use
+        :type runtime: ``str``
+
         :returns: ``True`` if `name` exists, else ``False``
         :rtype: ``bool``
         """
-        _runtime = self._get_container_runtime()
+        _runtime = self._get_container_runtime(runtime or self.runtime)
         if _runtime is not None:
             return (_runtime.container_exists(name) or
                     _runtime.get_container_by_name(name) is not None)
@@ -2805,16 +2833,19 @@ class Plugin():
             return [c for c in _containers if re.match(regex, c[1])]
         return []
 
-    def get_container_by_name(self, name):
+    def get_container_by_name(self, name, runtime=None):
         """Get the container ID for a specific container
 
         :param name:    The name of the container
         :type name: ``str``
 
+        :param runtime: The runtime to use
+        :type runtime: ``str``
+
         :returns: The ID of the container if it exists
         :rtype: ``str`` or ``None``
         """
-        _runtime = self._get_container_runtime()
+        _runtime = self._get_container_runtime(runtime)
         if _runtime is not None:
             return _runtime.get_container_by_name(name)
         return None
@@ -2908,7 +2939,8 @@ class Plugin():
                     cmd = _runtime.get_logs_command(_con[1])
                     self.add_cmd_output(cmd, **kwargs)
 
-    def fmt_container_cmd(self, container, cmd, quotecmd=False):
+    def fmt_container_cmd(self, container, cmd, quotecmd=False, runtime=None,
+                          runas=None):
         """Format a command to be executed by the loaded ``ContainerRuntime``
         in a specified container
 
@@ -2921,12 +2953,21 @@ class Plugin():
         :param quotecmd:    Whether the cmd should be quoted.
         :type quotecmd: ``bool``
 
+        :param runtime:     The specific runtime to use to run the command
+                            within the container
+        :type runtime: ``str``
+
+        :param runas:       What user runs the container. If set, we trust
+                            the container really runs (we dont keep them atm)
+        :type runas: ``str``
+
         :returns: The command to execute so that the specified `cmd` will run
                   within the `container` and not on the host
         :rtype: ``str``
         """
-        if self.container_exists(container):
-            _runtime = self._get_container_runtime()
+        if self.container_exists(container, runtime) or \
+           ((_runtime := self._get_container_runtime(runtime)) and
+           runas is not None):
             return _runtime.fmt_container_cmd(container, cmd, quotecmd)
         return ''
 
@@ -3083,8 +3124,15 @@ class Plugin():
         if output:
             journal_cmd += output_opt % output
 
+        fname = journal_cmd
+        tac = False
+        if log_size > 0:
+            journal_cmd = f"{journal_cmd} --reverse"
+            tac = True
+
         self._log_debug(f"collecting journal: {journal_cmd}")
         self._add_cmd_output(cmd=journal_cmd, timeout=timeout,
+                             tac=tac, to_file=True, suggest_filename=fname,
                              sizelimit=log_size, pred=pred, tags=tags,
                              priority=priority)
 
@@ -3158,7 +3206,7 @@ class Plugin():
                            "files from containers. Skipping collections.")
             return
         for contup in self.container_copy_paths:
-            con, path, sizelimit, tailit, tags = contup
+            con, path, sizelimit, tailit, tags, runas = contup
             self._log_info(f"collecting '{path}' from container '{con}'")
 
             arcdest = f"sos_containers/{con}/{path.lstrip('/')}"
@@ -3167,15 +3215,21 @@ class Plugin():
 
             cpcmd = rt.get_copy_command(
                 con, path, dest, sizelimit=sizelimit if tailit else None
-            )
-            cpret = self.exec_cmd(cpcmd, timeout=10)
+            ) if runas is None else rt.fmt_container_cmd(con, f"cat {path}",
+                                                         False)
+            cpret = self.exec_cmd(cpcmd, timeout=10, runas=runas)
 
             if cpret['status'] == 0:
-                if tailit:
+                if tailit or runas is not None:
                     # current runtimes convert files sent to stdout to tar
                     # archives, with no way to control that
                     self.archive.add_string(cpret['output'], arcdest)
                 self._add_container_file_to_manifest(con, path, arcdest, tags)
+                self.copied_files.append({
+                    'srcpath': path,
+                    'dstpath': arcdest,
+                    'symlink': "no"
+                })
             else:
                 self._log_info(f"error copying '{path}' from container "
                                f"'{con}': {cpret['output']}")
@@ -3414,7 +3468,7 @@ class Plugin():
         if verify_cmd:
             self.add_cmd_output(verify_cmd)
 
-    def container_path_exists(self, path, container):
+    def container_path_exists(self, path, container, runas=None):
         """Check if a path exists inside a container before
         collecting a dir listing
 
@@ -3428,7 +3482,8 @@ class Plugin():
         :returns:       True if the path exists in the container, else False
         :rtype:         ``bool``
         """
-        return self.exec_cmd(f"test -e {path}", container=container)
+        return self.exec_cmd(f"test -e {path}", container=container,
+                             runas=runas)
 
     def path_exists(self, path):
         """Helper to call the sos.utilities wrapper that allows the
@@ -3539,7 +3594,7 @@ class Plugin():
     def get_process_pids(self, process):
         """Get a list of all PIDs that match a specified name
 
-        :param process:     The name of the process the get PIDs for
+        :param process:     The name or regex of the process the get PIDs for
         :type process:  ``str``
 
         :returns: A list of PIDs
@@ -3551,12 +3606,40 @@ class Plugin():
         for path in cmd_line_paths:
             try:
                 with open(path, 'r', encoding='utf-8') as f:
-                    cmd_line = f.read().strip()
-                    if process in cmd_line:
+                    cmd_line = f.read().strip('\x00')
+                    if re.match(process, cmd_line):
                         pids.append(path.split("/")[2])
             except IOError:
                 continue
         return pids
+
+    def signal_process_usr1(self, process):
+        """
+        Send a SIGUSR1 to the pid(s) associated with the specified process
+        name. Callers should be aware that a 1-second delay per signalled pid,
+        up to 5 seconds at most, is expected as to allow sufficient time for
+        the signalled process(es) to react to the received signal.
+
+        :param process: The name or regex pattern of the process(es) to signal
+        :type process:  ``str``
+
+        :returns:   A list of pids that were successfully signalled
+        :rtype:     ``list``
+        """
+        signalled = []
+        pids = self.get_process_pids(process)
+        for pid in pids:
+            try:
+                os.kill(int(pid), signal.SIGUSR1)
+                signalled.append(pid)
+            except Exception as err:
+                self._log_debug(
+                    f"Failed to signal pid {pid} for '{process}': {err}"
+                )
+        # allow a small grace period to allow the signalled pids to complete
+        # whatever they're doing in response to the signal
+        sleep(min(len(signalled), 5))
+        return signalled
 
     def get_network_namespaces(self, ns_pattern=None, ns_max=None):
         if ns_max is None and self.commons['cmdlineopts'].namespaces:

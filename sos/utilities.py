@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import io
+import mmap
 from contextlib import closing
 from collections import deque
 
@@ -71,6 +72,7 @@ __all__ = [
     'recursive_dict_values_by_key',
     'shell_out',
     'sos_get_command_output',
+    'tac_logs',
     'tail',
 ]
 
@@ -128,6 +130,29 @@ def convert_bytes(num_bytes):
         if num_bytes >= size:
             return f"{float(num_bytes) / size:.1f}{symbol}"
     return f"{num_bytes}"
+
+
+def file_is_certificate(fname):
+    """Helper to determine if a given file is a certificate or not.
+
+    This is especially helpful for `sos clean`, which cannot obfuscate
+    certificate files content and instead, by default, will keep them as is.
+
+    :param fname:   The full path of the file to check
+    :type fname:    ``str``
+
+    :returns:   The type of the certificate or ``None``
+    :rtype:     ``string`` or ``None``
+    """
+    if fname[-4:] in [".csr", ".crt", ".pem"]:
+        with open(fname, 'r', encoding='utf-8') as f:
+            content = f.read()
+            if re.search(r'-----BEGIN CERTIFICATE-----', content):
+                return "certificate"
+            if re.search(r'-----BEGIN [A-Z]+ PRIVATE KEY-----', content):
+                return "certificatekey"
+        return None
+    return None
 
 
 def file_is_binary(fname):
@@ -210,10 +235,32 @@ def is_executable(command, sysroot=None):
     return any(os.access(path, os.X_OK) for path in candidates)
 
 
+def scrub_url_credential(url: str):
+    """
+    Replace username:password@ with ********@ in proxy URL if present
+    """
+    from urllib.parse import urlparse, urlunparse
+    try:
+        parsed_url = urlparse(url)
+        if parsed_url.username or parsed_url.password:
+            netloc = "********@"
+            if parsed_url.hostname:
+                netloc += parsed_url.hostname
+            if parsed_url.port:
+                netloc += f":{parsed_url.port}"
+            return urlunparse((
+                parsed_url.scheme, netloc, parsed_url.path,
+                parsed_url.params, parsed_url.query, parsed_url.fragment
+            ))
+        return url
+    except Exception:  # pylint: disable=broad-except
+        return url
+
+
 def sos_get_command_output(command, timeout=TIMEOUT_DEFAULT, stderr=False,
                            chroot=None, chdir=None, env=None, foreground=False,
                            binary=False, sizelimit=None, poller=None,
-                           to_file=False, runas=None):
+                           to_file=False, tac=False, runas=None):
     # pylint: disable=too-many-locals,too-many-branches
     """Execute a command and return a dictionary of status and output,
     optionally changing root or current working directory before
@@ -239,7 +286,10 @@ def sos_get_command_output(command, timeout=TIMEOUT_DEFAULT, stderr=False,
         time.sleep(0.01)
 
     if runas:
-        pwd_user = pwd.getpwnam(runas)
+        try:
+            pwd_user = pwd.getpwnam(runas)
+        except KeyError:  # no such user
+            return {'status': 127, 'output': "", 'truncated': ''}
         env.update({
             'HOME': pwd_user.pw_dir,
             'LOGNAME': runas,
@@ -275,8 +325,15 @@ def sos_get_command_output(command, timeout=TIMEOUT_DEFAULT, stderr=False,
         else:
             expanded_args.append(arg)
     if to_file:
-        # pylint: disable=consider-using-with
-        _output = open(to_file, 'w', encoding='utf-8')
+        if sizelimit:
+            # going to use HeadReader
+            _output = PIPE
+        elif tac:
+            # no limit but we need an intermediate file
+            _output = tempfile.TemporaryFile(dir=os.path.dirname(to_file))
+        else:
+            # pylint: disable=consider-using-with
+            _output = open(to_file, 'wb')
     else:
         _output = PIPE
     try:
@@ -285,10 +342,20 @@ def sos_get_command_output(command, timeout=TIMEOUT_DEFAULT, stderr=False,
                    bufsize=-1, env=cmd_env, close_fds=True,
                    preexec_fn=_child_prep_fn) as p:
 
-            if not to_file:
-                reader = AsyncReader(p.stdout, sizelimit, binary)
+            if to_file:
+                if sizelimit:
+                    if tac:
+                        _output = tempfile.TemporaryFile(
+                            dir=os.path.dirname(to_file)
+                        )
+                    else:
+                        # pylint: disable=consider-using-with
+                        _output = open(to_file, 'wb')
+                    reader = HeadReader(p.stdout, _output, sizelimit, binary)
+                else:
+                    reader = FakeReader(p, binary)
             else:
-                reader = FakeReader(p, binary)
+                reader = TailReader(p.stdout, sizelimit, binary)
 
             if poller:
                 while reader.running:
@@ -301,18 +368,23 @@ def sos_get_command_output(command, timeout=TIMEOUT_DEFAULT, stderr=False,
                 except Exception:
                     p.terminate()
                     if to_file:
-                        _output.close()
+                        if tac:
+                            with open(to_file, 'wb') as f_dst:
+                                tac_logs(_output, f_dst, True)
                     # until we separate timeouts from the `timeout` command
                     # handle per-cmd timeouts via Plugin status checks
                     reader.running = False
                     return {'status': 124, 'output': reader.get_contents(),
                             'truncated': reader.is_full}
-            if to_file:
-                _output.close()
 
             # wait for Popen to set the returncode
             while p.poll() is None:
                 pass
+
+            if to_file and tac:
+                with open(to_file, 'wb') as f_dst:
+                    tac_logs(_output, f_dst,
+                             reader.is_full or p.returncode != 0)
 
             if p.returncode in (126, 127):
                 stdout = b""
@@ -325,11 +397,54 @@ def sos_get_command_output(command, timeout=TIMEOUT_DEFAULT, stderr=False,
                 'truncated': reader.is_full
             }
     except OSError as e:
-        if to_file:
-            _output.close()
         if e.errno == errno.ENOENT:
             return {'status': 127, 'output': "", 'truncated': ''}
         raise e
+    finally:
+        if hasattr(_output, 'close'):
+            _output.close()
+
+
+def tac_logs(f_src, f_dst, drop_last_log=False):
+    """Python implementation of the tac utility with support
+    for multiline logs (starting with space). It is intended
+    to reverse the output of 'journalctl --reverse'.
+    """
+    NEWLINE_B = b'\n'
+    NEWLINE_I = 10
+    SPACE_I = 32
+    # make sure all python/libc buffers are flushed
+    # else fstat()/mmap() might see partial data
+    f_src.flush()
+    if os.fstat(f_src.fileno()).st_size == 0:
+        return
+    with mmap.mmap(f_src.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        sep1 = sep2 = mm.size()-1
+        if mm[sep2] != NEWLINE_I:
+            drop_last_log = True
+        while sep2 >= 0:
+            sep1 = mm.rfind(NEWLINE_B, 0, sep1)
+            # multiline logs have a first line not starting with space
+            # followed by lines starting with spaces
+            # line 5
+            # line 4
+            #  multiline 4
+            # line 3
+            if mm[sep1+1] == SPACE_I:
+                # first line starts with a space
+                # (this should not happen)
+                if sep1 == -1:
+                    break
+                # go find the previous NEWLINE
+                continue
+            # When we truncate or timeout, the last log
+            # might be a partial multiline log
+            if drop_last_log:
+                drop_last_log = False
+            else:
+                # write the (multi)line log ending with the NEWLINE
+                f_dst.write(mm[sep1+1:sep2+1])
+            sep2 = sep1
 
 
 def import_module(module_fqname, superclasses=None):
@@ -475,8 +590,8 @@ def recursive_dict_values_by_key(dobj, keys=[]):
 
 
 class FakeReader():
-    """Used as a replacement AsyncReader for when we are writing directly to
-    disk, and allows us to keep more simplified flows for executing,
+    """Used when we are writing directly to disk without sizelimits,
+    this allows us to keep more simplified flows for executing,
     monitoring, and collecting command output.
     """
 
@@ -496,8 +611,45 @@ class FakeReader():
         return self.process.poll() is None
 
 
-class AsyncReader(threading.Thread):
-    """Used to limit command output to a given size without deadlocking
+class HeadReader(threading.Thread):
+    """Used to 'head' the command output (f_src) to a given size
+    without deadlocking sos. Takes a sizelimit value in MB.
+    """
+
+    COPY_BUFSIZE = 1024*1024
+
+    def __init__(self, f_src, f_dst, sizelimit, binary):
+        super().__init__()
+        self.f_src = f_src
+        self.f_dst = f_dst
+        self.remaining = sizelimit * 1048576  # convert to bytes
+        self.binary = binary
+        self.running = True
+        self.start()
+
+    def run(self):
+        """Reads from the f_src (Popen stdout pipe) until we reach sizelimit.
+        once done, close f_src to signal the program that we are done.
+        """
+        while self.remaining > 0:
+            buf = self.f_src.read(min(self.remaining, self.COPY_BUFSIZE))
+            if not buf:
+                break
+            self.f_dst.write(buf)
+            self.remaining -= len(buf)
+        self.f_src.close()
+        self.running = False
+
+    def get_contents(self):
+        return '' if not self.binary else b''
+
+    @property
+    def is_full(self):
+        return self.remaining <= 0
+
+
+class TailReader(threading.Thread):
+    """Used to tail the command output to a given size without deadlocking
     sos.
 
     Takes a sizelimit value in MB, and will compile stdout from Popen into a

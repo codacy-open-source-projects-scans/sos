@@ -21,7 +21,7 @@ class Ssh(Plugin, IndependentPlugin):
     profiles = ('services', 'security', 'system', 'identity')
 
     option_list = [
-        PluginOpt('userconfs', default=True, val_type=str,
+        PluginOpt('userconfs', default=False,
                   desc=('Changes whether module will '
                         'collect user .ssh configs'))
     ]
@@ -47,6 +47,9 @@ class Ssh(Plugin, IndependentPlugin):
         # If userconfs option is set to False, skips this
         if self.get_option('userconfs'):
             self.user_ssh_files_permissions()
+
+        # Capture the output of extended test mode
+        self.add_cmd_output("sshd -T")
 
     def included_configs(self, sshcfgs):
         """ Include subconfig files """

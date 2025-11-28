@@ -32,7 +32,8 @@ SOS_TEST_DATA_DIR = os.path.realpath(os.path.join(SOS_TEST_DIR, 'test_data'))
 SOS_TEST_BIN = os.path.realpath(os.path.join(SOS_TEST_DIR, '../bin/sos'))
 
 RH_DIST = ['rhel', 'centos', 'fedora', 'centos-stream']
-UBUNTU_DIST = ['Ubuntu', 'debian']
+UBUNTU_DIST = ['Ubuntu']
+DEBIAN_DIST = ['Ubuntu', 'debian']
 
 _distro = distro.detect()
 
@@ -50,19 +51,27 @@ def skipIf(cond, message=None):
     return decorator
 
 
-# pylint: disable=unused-argument
 def redhat_only(tst):
-    def wrapper(func):
+    def wrapper(*args, **kwargs):
         if _distro.name not in RH_DIST:
             raise TestSkipError('Not running on a Red Hat distro')
+        tst(*args, *kwargs)
     return wrapper
 
 
-# pylint: disable=unused-argument
 def ubuntu_only(tst):
-    def wrapper(func):
+    def wrapper(*args, **kwargs):
         if _distro.name not in UBUNTU_DIST:
-            raise TestSkipError('Not running on a Ubuntu or Debian distro')
+            raise TestSkipError('Not running on a Ubuntu distro')
+        tst(*args, **kwargs)
+    return wrapper
+
+
+def debian_only(tst):
+    def wrapper(*args, **kwargs):
+        if _distro.name not in DEBIAN_DIST:
+            raise TestSkipError('Not running on a Debian or Ubuntu distro')
+        tst(*args, *kwargs)
     return wrapper
 
 
@@ -82,6 +91,7 @@ class BaseSoSTest(Test):
     sos_timeout = 600
     redhat_only = False
     ubuntu_only = False
+    debian_only = False
     end_of_test_case = False
     arch = []
     only_os_versions = []
@@ -126,7 +136,10 @@ class BaseSoSTest(Test):
 
         # get networking info
         hostname = socket.gethostname()
-        ip_addr = socket.gethostbyname(hostname)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # This doesn't send any data
+        s.connect(('10.255.255.255', 1))
+        ip_addr = s.getsockname()[0]
         sysinfo['networking'] = {}
         sysinfo['networking']['hostname'] = hostname
         sysinfo['networking']['ip_addr'] = ip_addr
@@ -247,7 +260,10 @@ class BaseSoSTest(Test):
                 raise TestSkipError('Not running on a Red Hat distro')
         elif self.ubuntu_only:
             if self.local_distro not in UBUNTU_DIST:
-                raise TestSkipError("Not running on a Ubuntu or Debian distro")
+                raise TestSkipError("Not running on a Ubuntu distro")
+        elif self.debian_only:
+            if self.local_distro not in DEBIAN_DIST:
+                raise TestSkipError("Not running on a Debian or Ubuntu distro")
 
     def check_arch_for_enablement(self):
         """

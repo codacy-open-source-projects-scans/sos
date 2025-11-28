@@ -48,13 +48,6 @@ class Podman(Plugin, RedHatPlugin, UbuntuPlugin):
     ]
 
     def setup(self):
-        self.add_env_var([
-            'HTTP_PROXY',
-            'HTTPS_PROXY',
-            'NO_PROXY',
-            'ALL_PROXY'
-        ])
-
         self.add_cmd_tags({
             'podman images': 'podman_list_images',
             'podman ps': 'podman_list_containers'
@@ -71,7 +64,8 @@ class Podman(Plugin, RedHatPlugin, UbuntuPlugin):
             'ps -a',
             'stats --no-stream --all',
             'version',
-            'volume ls'
+            'volume ls',
+            'system df -v',
         ]
 
         self.add_cmd_output([f"podman {s}" for s in subcmds])

@@ -26,13 +26,13 @@ from concurrent.futures import ThreadPoolExecutor
 from getpass import getpass
 from pathlib import Path
 from shlex import quote
-from textwrap import fill
 from sos.cleaner import SoSCleaner
 from sos.collector.sosnode import SosNode
 from sos.options import ClusterOption, str_to_bool
 from sos.component import SoSComponent
 from sos.utilities import bold
 from sos import __version__
+from sos.upload import SoSUpload
 
 COLLECTOR_CONFIG_DIR = '/etc/sos/groups.d'
 
@@ -130,6 +130,7 @@ class SoSCollector(SoSComponent):
         'ssh_user': 'root',
         'timeout': 600,
         'transport': 'auto',
+        'treat_certificates': 'obfuscate',
         'verify': False,
         'usernames': [],
         'upload': False,
@@ -145,7 +146,8 @@ class SoSCollector(SoSComponent):
         'upload_s3_bucket': None,
         'upload_s3_access_key': None,
         'upload_s3_secret_key': None,
-        'upload_s3_object_prefix': None
+        'upload_s3_object_prefix': None,
+        'upload_target': None
     }
 
     def __init__(self, parser, parsed_args, cmdline_args):
@@ -515,6 +517,15 @@ class SoSCollector(SoSComponent):
         cleaner_grp.add_argument('--usernames', dest='usernames', default=[],
                                  action='extend',
                                  help='List of usernames to obfuscate')
+        cleaner_grp.add_argument('--treat-certificates', default='obfuscate',
+                                 choices=['obfuscate', 'keep', 'remove'],
+                                 dest='treat_certificates',
+                                 help=(
+                                    'How to treat the certificate files '
+                                    '[.csr .crt .pem]. Defaults to "obfuscate"'
+                                    ' after convert the file to text. '
+                                    '"Key" certificate files are always '
+                                    'removed.'))
 
     @classmethod
     def display_help(cls, section):
@@ -721,13 +732,6 @@ class SoSCollector(SoSComponent):
         self.arc_name = self._get_archive_name()
         compr = 'gz'
         return self.tmpdir + '/' + self.arc_name + '.tar.' + compr
-
-    def _fmt_msg(self, msg):
-        width = 80
-        _fmt = ''
-        for line in msg.splitlines():
-            _fmt = _fmt + fill(line, width, replace_whitespace=False) + '\n'
-        return _fmt
 
     def _load_group_config(self):
         """
@@ -1304,10 +1308,23 @@ this utility or remote systems that it connects to.
             msg = 'No sos reports were collected, nothing to archive...'
             self.exit(msg, 1)
 
-        if (self.opts.upload and self.policy.get_upload_url()) or \
+        if self.opts.upload or \
                 self.opts.upload_s3_endpoint:
             try:
-                self.policy.upload_archive(self.arc_name)
+                hook_commons = {
+                    'policy': self.policy,
+                    'tmpdir': self.tmpdir,
+                    'sys_tmp': self.sys_tmp,
+                    'options': self.opts,
+                    'manifest': self.manifest
+                }
+                uploader = SoSUpload(parser=self.parser,
+                                     args=self.args,
+                                     cmdline=self.cmdline,
+                                     in_place=True,
+                                     hook_commons=hook_commons,
+                                     archive=self.arc_name)
+                uploader.execute()
                 self.ui_log.info("Uploaded archive successfully")
             except Exception as err:
                 self.ui_log.error(f"Upload attempt failed: {err}")
@@ -1398,19 +1415,16 @@ this utility or remote systems that it connects to.
             if do_clean:
                 _dir = os.path.join(self.tmpdir, self.archive._name)
                 cleaner.obfuscate_file(
-                    os.path.join(_dir, 'sos_logs', 'sos.log'),
-                    short_name='sos.log'
+                        os.path.join(_dir, 'sos_logs', 'sos.log')
                 )
                 cleaner.obfuscate_file(
-                    os.path.join(_dir, 'sos_logs', 'ui.log'),
-                    short_name='ui.log'
+                    os.path.join(_dir, 'sos_logs', 'ui.log')
                 )
                 cleaner.obfuscate_file(
-                    os.path.join(_dir, 'sos_reports', 'manifest.json'),
-                    short_name='manifest.json'
+                    os.path.join(_dir, 'sos_reports', 'manifest.json')
                 )
 
-            arc_name = self.archive.finalize(self.opts.compression_type)
+            arc_name = self.archive.finalize(method=None)
             final_name = os.path.join(self.sys_tmp, os.path.basename(arc_name))
             if do_clean:
                 final_name = cleaner.obfuscate_string(
