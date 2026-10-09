@@ -95,6 +95,9 @@ class ReportWithUserCustomisations(StageOneReportTest):
                'BOOT_IMAGE,fs.dentry-state --skip-cleaning-files '
                'proc/cmdline,sos_commands/*/sysctl* --no-update')
 
+    def pre_sos_setup(self):
+        self.setup_isolated_cleaner_cache()
+
     # Will the 'tmp' be properly treated in path to working dir without
     # raising an error?
     # To make this test effective, we assume the test runs on a system / with
@@ -154,7 +157,8 @@ class KeepBinaryFilesTest(StageTwoReportTest):
     def test_warning_message_shown(self):
         self.assertOutputContains(
             'WARNING: binary files that potentially contain sensitive '
-            'information will NOT be removed from the final archive'
+            'information will NOT be\n'
+            'removed from the final archive.'
         )
 
     def test_binary_is_in_archive(self):

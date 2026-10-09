@@ -8,6 +8,7 @@
 #
 # See the LICENSE file in the source distribution for further information.
 
+import json
 import os
 import sys
 import re
@@ -41,10 +42,11 @@ class RedHatPolicy(LinuxPolicy):
     default_container_runtime = 'podman'
     sos_pkg_name = 'sos'
     sos_bin_path = '/usr/sbin'
-    client_identifier_url = "https://sso.redhat.com/auth/"\
-        "realms/redhat-external/protocol/openid-connect/auth/device"
-    token_endpoint = "https://sso.redhat.com/auth/realms/"\
-        "redhat-external/protocol/openid-connect/token"
+    # These endpoints are specific to RHEL and should not
+    # be inherted by the non-RHEL distributions that subclass
+    # RedHatPolicy.
+    client_identifier_url = None
+    token_endpoint = None
 
     def __init__(self, sysroot=None, init=None, probe_runtime=True,
                  remote_exec=None):
@@ -213,6 +215,10 @@ support representative.
     _device_token = None
     # Max size for an http single request is 1Gb
     _max_size_request = 1073741824
+    client_identifier_url = "https://sso.redhat.com/auth/"\
+        "realms/redhat-external/protocol/openid-connect/auth/device"
+    token_endpoint = "https://sso.redhat.com/auth/realms/"\
+        "redhat-external/protocol/openid-connect/token"
 
     def __init__(self, sysroot=None, init=None, probe_runtime=True,
                  remote_exec=None):
@@ -310,6 +316,58 @@ support representative.
         super().__init__(sysroot=sysroot, init=init,
                          probe_runtime=probe_runtime,
                          remote_exec=remote_exec)
+        self._rhel_version = self._get_rhel_version()
+
+    def _get_rhel_version(self):
+        """Detect RHEL major version from RHEL_VERSION in /etc/os-release.
+
+        Parses RHEL_VERSION first (available on RHCOS 4.6+), falls back
+        to PLATFORM_ID (e.g. 'platform:el9').
+
+        :returns: RHEL major version as string ('8', '9', '10')
+        :rtype: ``str``
+        """
+        os_release_content = None
+        if self.remote_exec:
+            ret = self.remote_exec('cat /etc/os-release')
+            if ret['status'] == 0:
+                os_release_content = ret['output']
+        else:
+            try:
+                os_release_path = self.join_sysroot('/etc/os-release')
+                with open(os_release_path, 'r', encoding='utf-8') as f:
+                    os_release_content = f.read()
+            except (IOError, OSError) as err:
+                self.soslog.debug(
+                    f"Unable to read /etc/os-release: {err}"
+                )
+
+        if os_release_content:
+            rhel_version = None
+            platform_id = None
+            for line in os_release_content.splitlines():
+                if line.startswith('RHEL_VERSION='):
+                    rhel_version = line.split('=', 1)[1].strip().strip('"')
+                elif line.startswith('PLATFORM_ID='):
+                    platform_id = line.split('=', 1)[1].strip().strip('"')
+            if rhel_version:
+                major = rhel_version.split('.')[0]
+                self.soslog.debug(
+                    f"Detected RHEL major version: {major}"
+                )
+                return major
+            if platform_id and ':el' in platform_id:
+                major = platform_id.split(':el')[1]
+                self.soslog.debug(
+                    f"Detected RHEL major version from "
+                    f"PLATFORM_ID: {major}"
+                )
+                return major
+
+        self.soslog.debug(
+            "Unable to detect RHEL version, defaulting to '8'"
+        )
+        return '8'
 
     @classmethod
     def check(cls, remote=''):
@@ -335,20 +393,193 @@ support representative.
         # RH OCP environments.
         return self.find_preset(RHOCP)
 
+    def _get_node_role(self):
+        """Determine the OCP node role from the machine-config-daemon
+        currentconfig file on the host filesystem.
+
+        Checks in order: the ``machineconfiguration.openshift.io/role``
+        label, the owning MachineConfigPool name from
+        ``ownerReferences``, and finally the rendered config name
+        (format ``rendered-<role>-<hash>``).
+
+        :returns: The node role (e.g. 'master', 'worker') or empty string
+        :rtype: ``str``
+        """
+        config_path = self.join_sysroot(
+            '/etc/machine-config-daemon/currentconfig'
+        )
+        try:
+            with open(config_path, 'r', encoding='utf-8') as cfile:
+                config = json.load(cfile)
+            metadata = config.get('metadata', {})
+            role = metadata.get('labels', {}).get(
+                'machineconfiguration.openshift.io/role', ''
+            )
+            if not role:
+                owners = metadata.get('ownerReferences', [])
+                for ref in owners:
+                    if ref.get('kind') == 'MachineConfigPool':
+                        role = ref.get('name', '')
+                        break
+            if not role:
+                name = metadata.get('name', '')
+                if name.startswith('rendered-'):
+                    parts = name.split('-', 2)
+                    if len(parts) >= 2:
+                        role = parts[1]
+            if role:
+                self.soslog.debug(f"OCP node role detected: {role}")
+            return role
+        except (IOError, ValueError, KeyError) as err:
+            self.soslog.debug(
+                f"Unable to determine OCP node role: {err}"
+            )
+            return ''
+
+    def _get_cluster_name(self):
+        """Determine the OCP cluster name from the node kubeconfig
+        or the node's hostname.
+
+        Tries to extract the cluster name from the API server URL in
+        ``/etc/kubernetes/kubeconfig`` first (format
+        ``https://api-int.<clustername>.<basedomain>:6443`` or
+        ``https://api.<clustername>.<basedomain>:6443``). Falls back
+        to parsing the hostname if the kubeconfig is unavailable.
+
+        :returns: The cluster name or empty string
+        :rtype: ``str``
+        """
+        kubeconfig = self.join_sysroot(
+            '/etc/kubernetes/kubeconfig'
+        )
+        try:
+            with open(kubeconfig, 'r', encoding='utf-8') as kfile:
+                for line in kfile:
+                    match = re.search(
+                        r'server:\s*https://api(?:-int)?\.([^.:]+)\.', line
+                    )
+                    if match:
+                        cluster = match.group(1)
+                        self.soslog.debug(
+                            f"OCP cluster name from kubeconfig: "
+                            f"{cluster}"
+                        )
+                        return cluster
+        except IOError as err:
+            self.soslog.debug(
+                f"Unable to read kubeconfig: {err}"
+            )
+
+        hostname = self.host_name()
+        parts = hostname.split('.')
+        if len(parts) >= 2:
+            self.soslog.debug(
+                f"OCP cluster name from hostname: {parts[1]}"
+            )
+            return parts[1]
+        return ''
+
+    def get_archive_name(self):
+        """Override archive naming to include OCP node role and cluster
+        name when available on RHCOS systems.
+
+        Prepends the detected role and cluster name to the label field
+        and delegates to the parent implementation. This avoids
+        duplicating the archive name formatting logic.
+
+        :returns: A name to be used for the archive
+        :rtype: ``str``
+        """
+        role = self._get_node_role()
+        cluster = self._get_cluster_name()
+
+        if not role and not cluster:
+            return super().get_archive_name()
+
+        ocp_context = ''
+        if role:
+            ocp_context = role
+        if cluster:
+            ocp_context += ('-' + cluster if ocp_context else cluster)
+
+        opts = self.commons['cmdlineopts']
+        original_label = opts.label
+        if original_label:
+            opts.label = f"{ocp_context}-{original_label}"
+        else:
+            opts.label = ocp_context
+
+        try:
+            archive_name = super().get_archive_name()
+        finally:
+            opts.label = original_label
+
+        return archive_name
+
+    def _get_container_image(self):
+        """Determine the container image to use for sos collection.
+
+        Checks /root/.toolboxrc for a custom REGISTRY/IMAGE override,
+        then falls back to the version-appropriate support-tools image.
+
+        :returns: The container image reference
+        :rtype: ``str``
+        """
+        toolboxrc = self.join_sysroot('/root/.toolboxrc')
+        content = None
+        if self.remote_exec:
+            ret = self.remote_exec('cat /root/.toolboxrc')
+            if ret['status'] == 0:
+                content = ret['output']
+        else:
+            try:
+                with open(toolboxrc, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except IOError:
+                # .toolboxrc is optional; fall back to default image
+                pass
+
+        if content:
+            registry = None
+            img = None
+            for line in content.splitlines():
+                line = line.strip()
+                if line.startswith('REGISTRY='):
+                    registry = line.split('=', 1)[1].strip().strip('"')
+                elif line.startswith('IMAGE='):
+                    img = line.split('=', 1)[1].strip().strip('"')
+            if registry and img:
+                self.soslog.info(
+                    f"Using container image from .toolboxrc: "
+                    f"{registry}/{img}"
+                )
+                return f"{registry}/{img}"
+
+        return (f"registry.redhat.io/rhel{self._rhel_version}/"
+                f"support-tools:latest")
+
     def create_sos_container(self, image=None, auth=None, force_pull=False):
-        _image = image or self.container_image
+        _image = image or self._get_container_image()
         _pull = '--pull=always' if force_pull else ''
+        self.soslog.info(
+            f"Using RHEL {self._rhel_version} support-tools image"
+        )
         return (
-            f"{self.container_runtime} run -di "
+            f"{self.container_runtime} run -d "
             f"--name {self.sos_container_name} --privileged --ipc=host "
             f"--net=host --pid=host -e HOST=/host "
-            f"-e NAME={self.sos_container_name} -e "
-            f"IMAGE={_image} {_pull} "
+            f"-e NAME={self.sos_container_name} -e IMAGE={_image} "
+            f"{_pull} "
             f"-v /run:/run -v /var/log:/var/log "
             f"-v /etc/machine-id:/etc/machine-id "
-            f"-v /etc/localtime:/etc/localtime "
-            f"-v /:/host "
-            f"{auth or ''} {_image}"
+            f"-v /etc/localtime:/etc/localtime -v /:/host "
+            f"{auth or ''} {_image} sleep infinity"
+        )
+
+    def restart_sos_container(self):
+        return (
+            f"{self.container_runtime} start "
+            f"{self.sos_container_name}"
         )
 
     def set_cleanup_cmd(self):

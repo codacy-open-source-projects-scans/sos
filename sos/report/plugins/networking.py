@@ -271,11 +271,11 @@ class Networking(Plugin):
                     f"{ns_cmd_prefix} netstat {self.ns_wide} -agn",
                     f"{ns_cmd_prefix} nstat -zas",
                 ], priority=50, subdir=_subdir)
-                self.add_cmd_output([ns_cmd_prefix + "iptables-save"],
+                self.add_cmd_output([f"{ns_cmd_prefix}iptables-save"],
                                     pred=iptables_with_nft,
                                     subdir=_subdir,
                                     priority=50)
-                self.add_cmd_output([ns_cmd_prefix + "ip6tables-save"],
+                self.add_cmd_output([f"{ns_cmd_prefix}ip6tables-save"],
                                     pred=ip6tables_with_nft,
                                     subdir=_subdir,
                                     priority=50)
@@ -366,10 +366,14 @@ class UbuntuNetworking(Networking, UbuntuPlugin, DebianPlugin):
 
     def postproc(self):
 
+        netplan_secret_keys = (
+            r'password|psk|key|shared|private|public|'
+            r'identity|anonymous-identity|client-key-password'
+        )
         self.do_path_regex_sub(
-            "/etc/netplan",
-            r"(\s+password:).*",
-            r"\1 ******"
+            r"/(etc|lib|run)/netplan/.*",
+            rf"^(\s+(?:{netplan_secret_keys})\s*:\s*).+$",
+            r"\1******"
         )
 
 

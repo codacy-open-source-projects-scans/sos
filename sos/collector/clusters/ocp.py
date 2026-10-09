@@ -100,7 +100,7 @@ class ocp(Cluster):
         return self._oc_cmd
 
     def fmt_oc_cmd(self, cmd):
-        """Format the oc command to optionall include the kubeconfig file if
+        """Format the oc command to optionally include the kubeconfig file if
         one is specified
         """
         return f"{self.oc_cmd} {cmd}"
@@ -172,9 +172,16 @@ class ocp(Cluster):
                 )
 
     def cleanup(self):
-        """Remove the project we created to execute within
+        """Remove the project we created to execute within.
+
+        Only attempt deletion when using 'oc' transport, as the temporary
+        namespace is only created in that case.
         """
-        if self.project:
+        # Check actual transport being used
+        actual_transport = self.set_transport_type()
+
+        if self.project and actual_transport == 'oc':
+            # Only delete namespace if using oc transport
             try:
                 ret = self.exec_primary_cmd(
                     self.fmt_oc_cmd(f"delete project {self.project}"),
@@ -192,8 +199,8 @@ class ocp(Cluster):
                 )
                 if not ret['status'] == 0:
                     self.log_error(
-                        f"Error waiting for temporary project to be deleted: "
-                        f"{ret['output']}"
+                        f"Error waiting for temporary project to be "
+                        f"deleted: {ret['output']}"
                     )
             except Exception as err:
                 self.log_error(
@@ -203,7 +210,15 @@ class ocp(Cluster):
                 )
             # don't leave the config on a non-existing project
             self.exec_primary_cmd(self.fmt_oc_cmd("project default"))
+        elif self.project:
+            # SSH transport - namespace was never created, just clear reference
+            self.log_debug(
+                f"Skipping project deletion for {actual_transport} transport"
+            )
+
+        if self.project:
             self.project = None
+
         return True
 
     def _build_dict(self, nodelist):
@@ -346,7 +361,7 @@ class ocp(Cluster):
                 _oc_cmd = '/host/bin/oc'
                 # when run from a container, the oc command does not inherit
                 # the default config, so if it's present then pass it here to
-                # detect a funcitonal oc command. This is sidestepped in sos
+                # detect a functional oc command. This is sidestepped in sos
                 # report by being able to chroot the `oc` execution which we
                 # cannot do remotely
                 if node.file_exists('/root/.kube/config', need_root=True):

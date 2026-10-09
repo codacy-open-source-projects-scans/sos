@@ -94,6 +94,7 @@ class SoSReport(SoSComponent):
         'case_id': '',
         'chroot': 'auto',
         'clean': False,
+        'pack_dir': [],
         'container_runtime': 'auto',
         'keep_binary_files': False,
         'desc': '',
@@ -148,6 +149,7 @@ class SoSReport(SoSComponent):
         'upload_s3_secret_key': None,
         'upload_s3_object_prefix': None,
         'upload_target': None,
+        'upload_threads': 4,
         'add_preset': '',
         'del_preset': '',
         'treat_certificates': 'obfuscate'
@@ -220,6 +222,12 @@ class SoSReport(SoSComponent):
                                 dest="chroot", default='auto',
                                 help="chroot executed commands to SYSROOT "
                                      "[auto, always, never] (default=auto)")
+        report_grp.add_argument("--pack-dir", action="extend",
+                                dest="pack_dir", type=str, default=[],
+                                help="pack these collected directories into a "
+                                     "single tarball within the report "
+                                     "(e.g. /proc/fs/); may be repeated or "
+                                     "comma-separated")
         report_grp.add_argument("--container-runtime", default="auto",
                                 help="Default container runtime to use for "
                                      "collections. 'auto' for policy control.")
@@ -347,6 +355,18 @@ class SoSReport(SoSComponent):
                                 choices=['auto', 'https', 'ftp', 'sftp',
                                          's3'],
                                 help="Manually specify the upload protocol")
+        report_grp.add_argument("--upload-threads", default=4, type=int,
+                                choices=range(1, 17),
+                                metavar="THREADS",
+                                help=("Number of threads for multipart "
+                                      "uploads. When an archive exceeds "
+                                      "a certain size, defined in the "
+                                      "targets, it is uploaded in "
+                                      "parallel chunks using this many "
+                                      "threads (1-16, default: 4). "
+                                      "Each thread holds a 128 MiB chunk "
+                                      "in memory, e.g. 4 threads use "
+                                      "~512 MiB"))
 
         # Group to make add/del preset exclusive
         preset_grp = report_grp.add_mutually_exclusive_group()
@@ -485,7 +505,7 @@ class SoSReport(SoSComponent):
         """
         if self.opts.container_runtime != 'auto':
             crun = self.opts.container_runtime.lower()
-            if crun in ['none', 'off', 'diabled']:
+            if crun in ['none', 'off', 'disabled']:
                 self.policy.runtimes = {}
                 self.soslog.info(
                     "Disabled all container runtimes per user option."
@@ -788,7 +808,7 @@ class SoSReport(SoSComponent):
         # Make sure the log files are added before we remove the log
         # handlers. This prevents "No handlers could be found.." messages
         # from leaking to the console when running in --quiet mode when
-        # Archive classes attempt to acess the log API.
+        # Archive classes attempt to access the log API.
         if getattr(self, "sos_log_file", None):
             self.archive.add_file(self.sos_log_file,
                                   dest=os.path.join('sos_logs', 'sos.log'))
@@ -927,11 +947,13 @@ class SoSReport(SoSComponent):
             opts = {}
             for opt in self.opts.plugopts:
                 try:
-                    opt, val = opt.split("=")
+                    opt, val = opt.split("=", 1)
                 except ValueError:
                     val = True
 
+                opt = opt.strip()
                 if isinstance(val, str):
+                    val = val.strip()
                     arg = val.lower()
                     if arg in ["on", "enable", "enabled", "true", "yes"]:
                         val = True
@@ -1007,7 +1029,7 @@ class SoSReport(SoSComponent):
         msg = "\nEstimate-only mode enabled"
         ext_msg = []
         if self.opts.threads > 1:
-            ext_msg += [f"--threads={self.opts.threads} overriden to 1", ]
+            ext_msg += [f"--threads={self.opts.threads} overridden to 1", ]
             self.opts.threads = 1
         if not self.opts.build:
             ext_msg += ["--build enabled", ]
@@ -1572,6 +1594,17 @@ class SoSReport(SoSComponent):
                 do_clean = True
             except Exception as err:
                 print(_(f"ERROR: Unable to obfuscate report: {err}"))
+
+        # pack any directories the user asked into a single tarball within the
+        # report. Done after cleaning so obfuscation still applies to the
+        # readable files, and before the manifest is written so the list of
+        # packed tarballs is recorded in it - cleaning an already-built report
+        # relies on that list to know which tarballs to keep. The tarball is
+        # left uncompressed since the whole report is compressed when packaged.
+        if self.opts.pack_dir:
+            packed = self.archive.tar_subdirs(self.opts.pack_dir)
+            if packed:
+                self.report_md.add_list('packed_dirs', packed)
 
         self._add_sos_logs()
         if self.manifest is not None:

@@ -14,7 +14,7 @@
 This module houses the i18n setup and message function. The default is to use
 gettext to internationalize messages.
 """
-__version__ = "4.11.1"
+__version__ = "4.12.0"
 
 import os
 import sys
@@ -38,10 +38,10 @@ _sos = _default
 class SoS():
     """Main entrypoint for sos from the command line
 
-    Upon intialization, this class loads the basic option parser which will
+    Upon initialization, this class loads the basic option parser which will
     include the options shared by support components/subcommands. This is also
     where all subcommands present in the local installation are discovered,
-    loaded, and if a matching one is found, intialized.
+    loaded, and if a matching one is found, initialized.
     """
 
     def __init__(self, args):
@@ -93,6 +93,10 @@ class SoS():
         epilog = "See `sos <component> --help` for more information"
         self.parser = ArgumentParser(usage=usage_string, epilog=epilog)
         self.parser.register('action', 'extend', SosListOption)
+        self.parser.add_argument(
+            '--version', action='version',
+            version=f"sos version {__version__}"
+        )
         # set the component subparsers
         self.subparsers = self.parser.add_subparsers(
             dest='component',

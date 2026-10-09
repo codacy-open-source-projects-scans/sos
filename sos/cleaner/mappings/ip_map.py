@@ -16,7 +16,7 @@ from sos.cleaner.mappings import SoSMap
 class SoSIPMap(SoSMap):
     """A mapping store for IP addresses
 
-    Each IP address added to this map is chcked for subnet membership. If that
+    Each IP address added to this map is checked for subnet membership. If that
     subnet already exists in the map, then IP addresses are deterministically
     generated sequentially within that subnet. For example, if a given IP is
     matched to subnet 192.168.1.0/24 then 192.168.1 may be obfuscated to
@@ -43,7 +43,7 @@ class SoSIPMap(SoSMap):
     _networks = {}
     obfuscated_ips = set()
     network_first_octet = 100
-    skip_network_octets = ['127', '169', '172', '192']
+    skip_network_octets = [127, 169, 172, 192]
     compile_regexes = False
     # counter for obfuscating a single IP address; the value stands for
     # 172.17.0.0; we use a private block of IP addresses and ignore
@@ -201,7 +201,7 @@ class SoSIPMap(SoSMap):
         _obf_network = None
 
         if isinstance(network, ipaddress.IPv4Network):
-            if self.network_first_octet in self.skip_network_octets:
+            while self.network_first_octet in self.skip_network_octets:
                 self.network_first_octet += 1
             _obf_address = f"{self.network_first_octet}.0.0.0"
             _obf_mask = network.with_netmask.split('/')[1]

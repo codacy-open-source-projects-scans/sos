@@ -9,6 +9,7 @@
 import unittest
 from ipaddress import ip_interface
 from os.path import join
+from unittest import mock
 
 import sos.policies
 from sos.cleaner.parsers.ip_parser import SoSIPParser
@@ -25,6 +26,7 @@ from sos.cleaner.mappings.ipv6_map import SoSIPv6Map
 from sos.cleaner.preppers import SoSPrepper
 from sos.cleaner.preppers.hostname import HostnamePrepper
 from sos.cleaner.preppers.ip import IPPrepper
+from sos.cleaner.preppers.usernames import UsernamePrepper
 from sos.cleaner.archives.sos import SoSReportArchive
 from sos.options import SoSOptions
 
@@ -302,6 +304,14 @@ class CleanerParserTests(unittest.TestCase):
         self.assertNotEqual(t4, t4_test,
                             f"Parser did not match and obfuscate '{t4}'")
 
+    def test_ipv6_parser_uppercase_hex(self):
+        line = 'testing 2001:DB8::ABCD as an uppercase address'
+        _test = self.ipv6_parser.parse_line(line)[0]
+        self.assertNotEqual(
+            line, _test,
+            f"Parser did not match and obfuscate '{line}'"
+        )
+
     def test_ipv6_no_match_signature(self):
         modstr = '2D:4F:6E:55:4F:E8:5E:D2:D2:A3:73:62:AB:FD:F9:C5:A5:53:31:93'
         mod_test = self.ipv6_parser.parse_line(modstr)[0]
@@ -325,6 +335,36 @@ class CleanerParserTests(unittest.TestCase):
         line = "but foo is too short username"
         _test = self.uname_parser.parse_line(line)[0]
         self.assertEqual(line, _test)
+
+    def test_keyword_parser_all_keywords_obfuscated(self):
+        for kw in ('alpha', 'beta', 'gamma'):
+            self.kw_parser.mapping.add(kw)
+        self.kw_parser.generate_item_regexes()
+        line = 'alpha beta gamma all appear here'
+        result = self.kw_parser.parse_line(line)[0]
+        for kw in ('alpha', 'beta', 'gamma'):
+            self.assertNotIn(kw, result,
+                             f"Keyword '{kw}' was not obfuscated in: {result}")
+
+    def test_keyword_parser_multiple_keywords_consistent(self):
+        for kw in ('alpha', 'beta', 'gamma'):
+            self.kw_parser.mapping.add(kw)
+        self.kw_parser.generate_item_regexes()
+        line = 'alpha beta gamma'
+        first = self.kw_parser.parse_line(line)[0]
+        second = self.kw_parser.parse_line(line)[0]
+        self.assertEqual(first, second,
+                         "Obfuscation was not consistent across calls")
+
+    def test_username_parser_all_usernames_obfuscated(self):
+        for name in ('alice', 'bobsmith', 'charlie'):
+            self.uname_parser.mapping.add(name)
+        line = 'alice bobsmith charlie were all logged in'
+        result = self.uname_parser.parse_line(line)[0]
+        for name in ('alice', 'bobsmith', 'charlie'):
+            self.assertNotIn(name, result,
+                             f"Username '{name}' was not obfuscated in:"
+                             f" {result}")
 
 
 class PrepperTests(unittest.TestCase):
@@ -358,6 +398,210 @@ class PrepperTests(unittest.TestCase):
             self.host_prepper.get_items_for_map('hostname', self.archive)
         )
 
+    def test_hostname_prepper_etc_hosts_short_name_in_items(self):
+        """Short hostnames from /etc/hosts must appear in items so that
+        mapping.add() is called and self.hosts is populated, allowing proper
+        obfuscation."""
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if path == 'sos_commands/host/hostname_-f':
+                    return 'myhost.example.com'
+                if path == 'etc/hosts':
+                    return ('192.168.1.100 other.example.com otherhost\n'
+                            '10.0.0.1 shortonly\n')
+                return ''
+
+        items = self.host_prepper.get_items_for_map('hostname', MockArchive())
+        self.assertIn('otherhost', items,
+                      'Short hostname from /etc/hosts must be in items')
+        self.assertIn('shortonly', items,
+                      'Short-name-only /etc/hosts entry must be in items')
+
+    def test_hostname_prepper_etc_hosts_short_name_obfuscated(self):
+        """Verify that short hostnames added from /etc/hosts are actually
+        obfuscated during file parsing."""
+        workdir = join(sos.policies.load().get_tmp_dir(None),
+                       'sos_avocado_testing')
+
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if path == 'sos_commands/host/hostname_-f':
+                    return 'myhost.example.com'
+                if path == 'etc/hosts':
+                    return '10.0.0.1 shortonly\n'
+                return ''
+
+        prepper = HostnamePrepper(SoSOptions(domains=[]))
+        items = prepper.get_items_for_map('hostname', MockArchive())
+        parser = SoSHostnameParser(config={}, workdir=workdir)
+        for item in items:
+            parser.mapping.add(item)
+        for ritem in prepper.regex_items['hostname']:
+            parser.mapping.add_regex_item(ritem)
+        parser.generate_item_regexes()
+
+        line = 'connected to shortonly for configuration'
+        result = parser.parse_line(line)[0]
+        self.assertNotEqual(line, result,
+                            'Short hostname from /etc/hosts was not '
+                            'obfuscated')
+        self.assertNotIn('shortonly', result,
+                         'shortonly still present after obfuscation')
+
+    def test_hostname_prepper_etc_hosts_inline_comment_stripped(self):
+        """Inline comments in /etc/hosts lines must not be treated as
+        hostnames."""
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if path == 'sos_commands/host/hostname_-f':
+                    return 'myhost.example.com'
+                if path == 'etc/hosts':
+                    return '192.168.1.100 otherhost # production server\n'
+                return ''
+
+        items = self.host_prepper.get_items_for_map('hostname', MockArchive())
+        self.assertNotIn('production', items,
+                         'Comment word "production" must not be treated as a '
+                         'hostname')
+        self.assertNotIn('server', items,
+                         'Comment word "server" must not be treated as a '
+                         'hostname')
+        self.assertNotIn('production',
+                         self.host_prepper.regex_items['hostname'],
+                         'Comment word "production" must not be in '
+                         'regex_items')
+
+    def test_hostname_prepper_sssd_conf_values_in_items(self):
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if path == 'sos_commands/host/hostname_-f':
+                    return 'myhost.example.com'
+                if path == 'etc/hosts':
+                    return ''
+                if path == 'etc/sssd/sssd.conf':
+                    return ('[sssd]\n'
+                            'domains = example.com, corp.example.com\n'
+                            'krb5_realm = EXAMPLE.COM\n'
+                            'ad_domain = ad.example.com\n')
+                if path == 'etc/sssd/conf.d/extra.conf':
+                    return ('[sssd]\n'
+                            '# ad_server = commented.example.com\n'
+                            'domains = anotherexample.com, secret.com\n')
+                return ''
+
+        self.host_prepper._get_conf_files = lambda archive: {
+            'etc/sssd/sssd.conf',
+            'etc/sssd/conf.d/extra.conf'
+            }
+
+        items = self.host_prepper.get_items_for_map('hostname', MockArchive())
+        expected = {
+            'myhost',
+            'myhost.example.com',
+            'example.com',
+            'corp.example.com',
+            'EXAMPLE.COM',
+            'ad.example.com',
+            'commented.example.com',
+            'anotherexample.com',
+            'secret.com',
+        }
+        self.assertTrue(expected.issubset(set(items)))
+
+    def test_hostname_prepper_sssd_conf_values_are_obfuscated(self):
+        workdir = join(sos.policies.load().get_tmp_dir(None),
+                       'sos_avocado_testing')
+
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if path == 'sos_commands/host/hostname_-f':
+                    return 'myhost.example.com'
+                if path == 'etc/hosts':
+                    return ''
+                if path == 'etc/sssd/sssd.conf':
+                    return ('[domain/example.com]\n'
+                            'krb5_realm = EXAMPLE.COM\n')
+                return ''
+
+        self.host_prepper._get_conf_files = lambda archive: {
+            'etc/sssd/sssd.conf',
+            'etc/sssd/conf.d/extra.conf'
+            }
+
+        items = self.host_prepper.get_items_for_map('hostname', MockArchive())
+        parser = SoSHostnameParser(config={}, workdir=workdir)
+        for item in items:
+            parser.mapping.add(item)
+        for ritem in self.host_prepper.regex_items['hostname']:
+            parser.mapping.add_regex_item(ritem)
+        parser.generate_item_regexes()
+
+        line = 'krb5_realm = EXAMPLE.COM'
+        result = parser.parse_line(line)[0]
+        self.assertNotEqual(line, result,
+                            'SSSD realm value was not obfuscated')
+        self.assertNotIn('EXAMPLE.COM', result,
+                         'Original SSSD realm still present after '
+                         'obfuscation')
+
+    def test_hostname_prepper_sssd_fqdn_fully_obfuscated(self):
+        """Verify that an FQDN from sssd.conf domains= is fully obfuscated,
+        not just its hostname part."""
+        workdir = join(sos.policies.load().get_tmp_dir(None),
+                       'sos_avocado_testing')
+
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if path == 'sos_commands/host/hostname_-f':
+                    return 'myhost.example.com'
+                if path == 'etc/hosts':
+                    return ''
+                if path == 'etc/sssd/sssd.conf':
+                    return ('[sssd]\n'
+                            'domains = bryan.ad.domain\n'
+                            '[domain/bryan.ad.domain]\n'
+                            'ad_domain = bryan.ad.domain\n'
+                            'krb5_realm = bryan.AD.DOMAIN\n')
+                return ''
+
+        self.host_prepper._get_conf_files = lambda archive: {
+            'etc/sssd/sssd.conf',
+            'etc/sssd/conf.d/extra.conf'
+            }
+
+        items = self.host_prepper.get_items_for_map('hostname', MockArchive())
+        parser = SoSHostnameParser(config={}, workdir=workdir)
+        for item in items:
+            parser.mapping.add(item)
+        for ritem in self.host_prepper.regex_items['hostname']:
+            parser.mapping.add_regex_item(ritem)
+        parser.generate_item_regexes()
+
+        line = 'domains = bryan.ad.domain'
+        result = parser.parse_line(line)[0]
+        self.assertNotIn('bryan', result,
+                         'Short hostname "bryan" still present in output')
+        self.assertNotIn('ad.domain', result,
+                         'Domain "ad.domain" still present after obfuscation')
+
     def test_ipv4_prepper_parser_files(self):
         self.assertEqual(
             ['sos_commands/networking/ip_-o_addr'],
@@ -369,3 +613,319 @@ class PrepperTests(unittest.TestCase):
             [],
             self.ipv4_prepper.get_parser_file_list('foobar', self.archive)
         )
+
+    def test_username_prepper_rhoso_skip_list(self):
+        """Verify that RHOSO service usernames are in the skip list and will
+        not be obfuscated."""
+        username_prepper = UsernamePrepper(SoSOptions())
+        rhoso_usernames = [
+            'nova',
+            'ceilometer',
+            'ceph',
+            'libvirt',
+            'openvswitch',
+            'cloud-admin'
+        ]
+        for username in rhoso_usernames:
+            self.assertIn(username, username_prepper.skip_list,
+                          f"RHOSO service username '{username}' should be in "
+                          f"skip_list to prevent obfuscation")
+
+    def test_username_prepper_rhoso_not_collected(self):
+        """Verify that RHOSO service usernames found in mock lastlog output
+        are not included in the items to obfuscate."""
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if 'lastlog' in path or 'last' in path:
+                    return ('nova                     pts/0    10.0.0.1'
+                            '         Mon Jan 01 10:00:00 +0000 2024\n'
+                            'ceilometer               pts/1    10.0.0.2'
+                            '         Mon Jan 01 11:00:00 +0000 2024\n'
+                            'ceph                     pts/2    10.0.0.3'
+                            '         Mon Jan 01 12:00:00 +0000 2024\n'
+                            'libvirt                  pts/3    10.0.0.4'
+                            '         Mon Jan 01 13:00:00 +0000 2024\n'
+                            'openvswitch              pts/4    10.0.0.5'
+                            '         Mon Jan 01 14:00:00 +0000 2024\n'
+                            'cloud-admin              pts/5    10.0.0.6'
+                            '         Mon Jan 01 15:00:00 +0000 2024\n'
+                            'testuser                 pts/6    10.0.0.7'
+                            '         Mon Jan 01 16:00:00 +0000 2024\n')
+                return ''
+
+        username_prepper = UsernamePrepper(SoSOptions(usernames=[]))
+        items = username_prepper.get_items_for_map('username', MockArchive())
+
+        # RHOSO usernames should NOT be in the items list
+        rhoso_usernames = ['nova', 'ceilometer', 'ceph', 'libvirt',
+                           'openvswitch', 'cloud-admin']
+        for username in rhoso_usernames:
+            self.assertNotIn(username, items,
+                             f"RHOSO service username '{username}' should not "
+                             f"be collected for obfuscation")
+
+        # Regular users should still be collected
+        self.assertIn('testuser', items,
+                      "Regular username 'testuser' should be collected for "
+                      "obfuscation")
+
+    def test_username_prepper_sssd_conf_values_in_items(self):
+        """Login names listed in SSSD config files must be collected as
+        items so that the username mapping obfuscates them."""
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if path == 'etc/sssd/sssd.conf':
+                    return ('[sssd]\n'
+                            'services = nss, pam\n'
+                            '[domain/example.com]\n'
+                            'access_provider = simple\n'
+                            'users = myuser, exampleuser\n'
+                            'simple_allow_users = alloweduser\n'
+                            'simple_deny_users = denieduser\n'
+                            'pam_trusted_users = 0, secretuser0\n')
+                if path == 'etc/sssd/conf.d/extra.conf':
+                    return ('[domain/example.com]\n'
+                            '# excluded_users = hiddenuser\n')
+                return ''
+
+        username_prepper = UsernamePrepper(SoSOptions(usernames=[]))
+        username_prepper._get_conf_files = lambda archive: {
+            'etc/sssd/sssd.conf',
+            'etc/sssd/conf.d/extra.conf'
+            }
+
+        items = username_prepper.get_items_for_map('username', MockArchive())
+        expected = {
+            'myuser',
+            'exampleuser',
+            'alloweduser',
+            'denieduser',
+            'secretuser0',
+            'hiddenuser',
+        }
+        self.assertTrue(expected.issubset(set(items)),
+                        f"Expected SSSD login names missing from items: "
+                        f"{expected - set(items)}")
+        # numeric UIDs must not be treated as login names
+        self.assertNotIn('0', items,
+                         "Numeric UID must not be collected as a username")
+
+    def test_username_prepper_sssd_conf_values_are_obfuscated(self):
+        """Login names sourced from SSSD config must actually be obfuscated
+        by the username parser."""
+        workdir = join(sos.policies.load().get_tmp_dir(None),
+                       'sos_avocado_testing')
+
+        class MockArchive:
+            is_sos = True
+            is_insights = False
+
+            def get_file_content(self, path):
+                if path == 'etc/sssd/sssd.conf':
+                    return ('[domain/example.com]\n'
+                            'access_provider = simple\n'
+                            'users = goldberl\n')
+                return ''
+
+        username_prepper = UsernamePrepper(SoSOptions(usernames=[]))
+        username_prepper._get_conf_files = lambda archive: {
+            'etc/sssd/sssd.conf'
+            }
+
+        items = username_prepper.get_items_for_map('username', MockArchive())
+        parser = SoSUsernameParser(config={}, workdir=workdir)
+        for item in items:
+            parser.mapping.add(item)
+
+        line = 'users = goldberl'
+        result = parser.parse_line(line)[0]
+        self.assertNotIn('goldberl', result,
+                         'SSSD login name was not obfuscated')
+
+
+class PackedDirTarballTests(unittest.TestCase):
+    """Verify the cleaner only keeps tarballs that the manifest's
+    'packed_dirs' list records as produced by the report '--pack-dir'
+    option, rather than any tarball found in the archive."""
+
+    def setUp(self):
+        self.archive = SoSReportArchive(
+            archive_path='tests/test_data/'
+                         'sosreport-cleanertest-2021-08-03-qpkxdid.tar.xz',
+            keep_binary_files=[],
+            tmpdir='/tmp',
+            treat_certificates='obfuscate'
+        )
+
+    def test_manifest_listed_tarball_is_kept(self):
+        self.archive.packed_dirs = ['proc/fs.tar']
+        self.assertTrue(self.archive.is_packed_dir_tarball('proc/fs.tar'))
+
+    def test_unlisted_tarball_is_not_kept(self):
+        # a tarball collected from the host, e.g. etc/foreman/backup.tar,
+        # is not packed-dir output and must follow normal removal logic
+        self.archive.packed_dirs = ['proc/fs.tar']
+        self.assertFalse(
+            self.archive.is_packed_dir_tarball('etc/foreman/backup.tar'))
+
+    def test_no_packed_dirs_keeps_nothing(self):
+        # archives with no manifest, or one without packed_dirs
+        self.archive.packed_dirs = []
+        self.assertFalse(self.archive.is_packed_dir_tarball('proc/fs.tar'))
+
+    def test_packed_dirs_loaded_from_manifest(self):
+        manifest = (
+            '{"components": {"report": '
+            '{"packed_dirs": ["/proc/fs", "/etc/foreman/"]}}}'
+        )
+        with mock.patch.object(self.archive, 'get_file_content',
+                               return_value=manifest):
+            self.assertEqual(self.archive._load_packed_dirs(),
+                             ['proc/fs.tar', 'etc/foreman.tar'])
+
+    def test_packed_dirs_empty_without_manifest(self):
+        with mock.patch.object(self.archive, 'get_file_content',
+                               return_value=''):
+            self.assertEqual(self.archive._load_packed_dirs(), [])
+
+    def test_packed_dirs_empty_for_premature_manifest(self):
+        # manifests from sos versions predating --pack-dir
+        with mock.patch.object(self.archive, 'get_file_content',
+                               return_value='{"components": {"report": {}}}'):
+            self.assertEqual(self.archive._load_packed_dirs(), [])
+
+
+class ExtractArchiveSafetyTests(unittest.TestCase):
+    """Out-of-tree symlink members must not write outside dest."""
+
+    def _write_tar(self, members):
+        import io
+        import tarfile
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+                suffix='.tar', delete=False) as handle:
+            tar_path = handle.name
+        with tarfile.open(tar_path, 'w') as tf:
+            for name, kind, extra in members:
+                info = tarfile.TarInfo(name=name)
+                if kind == 'symlink':
+                    info.type = tarfile.SYMTYPE
+                    info.linkname = extra
+                    tf.addfile(info)
+                elif kind == 'chrdev':
+                    info.type = tarfile.CHRTYPE
+                    info.devmajor, info.devminor = extra
+                    tf.addfile(info)
+                else:
+                    payload = extra
+                    info.size = len(payload)
+                    tf.addfile(info, io.BytesIO(payload))
+        return tar_path
+
+    def test_absolute_symlink_does_not_write_outside_dest(self):
+        import os
+        import tempfile
+        from sos.cleaner.archives import extract_archive
+
+        victim_dir = tempfile.mkdtemp()
+        victim = os.path.join(victim_dir, 'pwned')
+        tar_path = self._write_tar([
+            ('sosreport-host/var/log/link', 'symlink', victim_dir),
+            ('sosreport-host/var/log/link/pwned', 'file', b'PWNED\n'),
+        ])
+        dest = tempfile.mkdtemp()
+        with self.assertLogs('sos', level='WARNING') as logcm:
+            extract_archive(tar_path, dest)
+        self.assertFalse(
+            os.path.exists(victim),
+            'extraction followed an out-of-tree symlink',
+        )
+        self.assertTrue(
+            any('skipping tar member' in rec for rec in logcm.output),
+            logcm.output,
+        )
+        os.remove(tar_path)
+
+    def test_absolute_symlink_when_extractall_ignores_filter(self):
+        """Debian 12 / Python 3.11.2 ignores TarFile.extraction_filter."""
+        import os
+        import tarfile
+        import tempfile
+        from sos.cleaner.archives import extract_archive
+
+        orig_extractall = tarfile.TarFile.extractall
+
+        def extractall_ignore_filter(self, *args, **kwargs):
+            self.extraction_filter = (lambda member, path: member)
+            return orig_extractall(self, *args, **kwargs)
+
+        victim_dir = tempfile.mkdtemp()
+        victim = os.path.join(victim_dir, 'pwned')
+        tar_path = self._write_tar([
+            ('sosreport-host/var/log/link', 'symlink', victim_dir),
+            ('sosreport-host/var/log/link/pwned', 'file', b'PWNED\n'),
+        ])
+        dest = tempfile.mkdtemp()
+        with mock.patch.object(tarfile.TarFile, 'extractall',
+                               extractall_ignore_filter):
+            with self.assertLogs('sos', level='WARNING'):
+                extract_archive(tar_path, dest)
+        self.assertFalse(
+            os.path.exists(victim),
+            'extraction followed an out-of-tree symlink',
+        )
+        os.remove(tar_path)
+
+    def test_in_tree_relative_symlink_is_kept(self):
+        import os
+        import tempfile
+        from sos.cleaner.archives import extract_archive
+
+        tar_path = self._write_tar([
+            ('sosreport-host/etc/motd', 'file', b'hello\n'),
+            ('sosreport-host/etc/motd.link', 'symlink', 'motd'),
+        ])
+        dest = tempfile.mkdtemp()
+        extract_archive(tar_path, dest)
+        found_link = None
+        for root, _, files in os.walk(dest):
+            if 'motd.link' in files:
+                found_link = os.path.join(root, 'motd.link')
+                break
+        self.assertTrue(found_link and os.path.islink(found_link))
+        self.assertEqual(os.readlink(found_link), 'motd')
+        os.remove(tar_path)
+
+    def test_non_root_skips_device_and_keeps_later_files(self):
+        import os
+        import tempfile
+        from sos.cleaner.archives import extract_archive
+
+        tar_path = self._write_tar([
+            ('sosreport-host/etc/hostname', 'file', b'testhost\n'),
+            ('sosreport-host/dev/null', 'chrdev', (1, 3)),
+            ('sosreport-host/etc/hosts', 'file', b'127.0.0.1 localhost\n'),
+        ])
+        dest = tempfile.mkdtemp()
+        with mock.patch('sos.cleaner.archives.os.getuid', return_value=1000):
+            with self.assertLogs('sos', level='WARNING'):
+                extract_archive(tar_path, dest)
+
+        found_hostname = found_hosts = found_null = None
+        for root, _, files in os.walk(dest):
+            if 'hostname' in files:
+                found_hostname = os.path.join(root, 'hostname')
+            if 'hosts' in files:
+                found_hosts = os.path.join(root, 'hosts')
+            if 'null' in files and os.path.basename(root) == 'dev':
+                found_null = os.path.join(root, 'null')
+        self.assertTrue(found_hostname)
+        self.assertTrue(found_hosts)
+        self.assertIsNone(found_null)
+        os.remove(tar_path)

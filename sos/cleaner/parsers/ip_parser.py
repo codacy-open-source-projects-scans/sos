@@ -21,10 +21,6 @@ class SoSIPParser(SoSCleanerParser):
         # IPv4 with or without CIDR
         r'((?<!(-|\.|\d))([0-9]{1,3}\.){3}([0-9]){1,3}(\/([0-9]{1,2}))?)'
     )
-    skip_line_patterns = [
-        # don't match package versions recorded in journals
-        r'.*dnf\[.*\]:'
-    ]
 
     parser_skip_files = [
         # skip these as version numbers will frequently look like IP addresses
@@ -47,5 +43,5 @@ class SoSIPParser(SoSCleanerParser):
     compile_regexes = False
 
     def __init__(self, config, workdir, skip_cleaning_files=[]):
-        self.mapping = SoSIPMap(workdir)
+        self.mapping = SoSIPMap(workdir, self.regex_pattern)
         super().__init__(config, skip_cleaning_files)

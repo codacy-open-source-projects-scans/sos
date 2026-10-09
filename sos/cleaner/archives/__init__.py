@@ -8,6 +8,7 @@
 #
 # See the LICENSE file in the source distribution for further information.
 
+import json
 import logging
 import os
 import shutil
@@ -21,30 +22,110 @@ from sos.utilities import (file_is_binary, sos_get_command_output,
                            file_is_certificate)
 
 
+def _path_is_within(directory, target):
+    """Return True if *target* is inside (or equal to) *directory*.
+
+    Both arguments must already be absolute paths.
+    """
+    try:
+        return os.path.commonpath([directory, target]) == directory
+    except ValueError:
+        return False
+
+
+def _member_path_ok(abs_dest, member):
+    """Return True when the member resolves inside *abs_dest*."""
+    member_path = os.path.abspath(os.path.join(abs_dest, member.name))
+    if not _path_is_within(abs_dest, member_path):
+        return False
+    if member.issym() or member.islnk():
+        if os.path.isabs(member.linkname):
+            # Absolute linkname is the same for both types: check it directly.
+            link_target = member.linkname
+        elif member.issym():
+            # Symlink: target is relative to the directory that will contain
+            # the symlink on disk, i.e. dirname(member_path).
+            link_target = os.path.abspath(
+                os.path.join(os.path.dirname(member_path), member.linkname)
+            )
+        else:
+            # Hardlink: tarfile resolves linkname relative to abs_dest (the
+            # archive root), not relative to the member's directory.
+            link_target = os.path.abspath(
+                os.path.join(abs_dest, member.linkname)
+            )
+        if not _path_is_within(abs_dest, link_target):
+            return False
+    return True
+
+
+def _warn_skip_member(member, reason):
+    logging.getLogger('sos').warning(
+        "[cleaner] skipping tar member %r: %s", member.name, reason)
+
+
+def _make_safer_extract_filter(dest_path):
+    """Build a per-archive extraction filter (closure).
+
+    PEP-706 ``data_filter`` is the primary check.  It rejects special files
+    (block devices, FIFOs) that are legitimate sosreport members, so those
+    are rescued when their path stays inside the destination tree.
+    Out-of-tree symlinks and absolute links are skipped rather than aborting
+    the whole extraction.  ``fully_trusted`` is not used: a member-name-only
+    ``abspath``/``commonprefix`` guard does not stop a symlink-to-absolute-
+    path followed by a regular file of the same relative name.
+    """
+    abs_dest = os.path.abspath(dest_path)
+    data_filter = getattr(tarfile, 'data_filter', None)
+
+    def _filter(member, dest_path):
+        if data_filter is not None:
+            try:
+                return data_filter(member, dest_path)
+            except tarfile.FilterError as err:
+                if (member.isdev() or member.isfifo()) \
+                        and _member_path_ok(abs_dest, member):
+                    return member
+                _warn_skip_member(member, err)
+                return None
+
+        if not _member_path_ok(abs_dest, member):
+            _warn_skip_member(member, "path outside destination")
+            return None
+        return member
+
+    return _filter
+
+
 # python older than 3.8 will hit a pickling error when we go to spawn a new
 # process for extraction if this method is a part of the SoSObfuscationArchive
 # class. So, the simplest solution is to remove it from the class.
 def extract_archive(archive_path, tmpdir):
     with tarfile.open(archive_path) as archive:
         path = os.path.join(tmpdir, 'cleaner')
-        # set extract filter since python 3.12 (see PEP-706 for more)
-        # Because python 3.10 and 3.11 raises false alarms as exceptions
-        # (see #3330 for examples), we can't use data filter but must
-        # fully trust the archive (legacy behaviour)
-        archive.extraction_filter = getattr(tarfile, 'fully_trusted_filter',
-                                            (lambda member, path: member))
+        filt = _make_safer_extract_filter(path)
+        # Honored on 3.12+ (and 3.11.4+). Debian 12 ships 3.11.2, where
+        # this attribute is ignored; members must still be pre-filtered.
+        archive.extraction_filter = filt
 
-        # Guard against "Arbitrary file write during tarfile extraction"
-        # Checks the extracted files don't stray out of the target directory.
+        not_root = os.getuid() != 0
+        members = []
         for member in archive.getmembers():
-            member_path = os.path.join(path, member.name)
-            abs_directory = os.path.abspath(path)
-            abs_target = os.path.abspath(member_path)
-            prefix = os.path.commonprefix([abs_directory, abs_target])
-            if prefix != abs_directory:
-                raise Exception(f"Attempted path traversal in tarfle"
-                                f"{prefix} != {abs_directory}")
-            archive.extract(member, path)
+            member = filt(member, path)
+            if member is None:
+                continue
+            # Directories collected from the host may lack u+w or u+x
+            # permissions, preventing child members from being created during
+            # extract
+            if not_root and member.isdir():
+                member.mode |= stat.S_IWUSR | stat.S_IXUSR
+            # tarfile.makedev() -> os.mknod() needs CAP_MKNOD. Drop device
+            # nodes for non-root rather than aborting the whole extract.
+            if not_root and member.isdev():
+                _warn_skip_member(member, "device node requires root")
+                continue
+            members.append(member)
+        archive.extractall(path, members=members)
         return os.path.join(path, archive.name.split('/')[-1].split('.tar')[0])
 
 
@@ -74,6 +155,7 @@ class SoSObfuscationArchive():
         self.soslog = logging.getLogger('sos')
         self.ui_log = logging.getLogger('sos_ui')
         self.skip_list = self._load_skip_list()
+        self.packed_dirs = []
         self.is_extracted = False
         self._load_self()
         self.archive_root = ''
@@ -92,7 +174,7 @@ class SoSObfuscationArchive():
                 self.log_info(f"Error obfuscating string data: {err}")
         return string_data
 
-    # TODO: merge content to obfuscate_arc_files as that is the only place we
+    # TODO: merge content to obfuscate_arc_file as that is the only place we
     # call obfuscate_filename ?
     def obfuscate_filename(self, short_name, filename):
         _ob_short_name = self.obfuscate_string(short_name.split('/')[-1])
@@ -152,86 +234,93 @@ class SoSObfuscationArchive():
                 self.log_debug(f"failed to parse line: {err}", parser.name)
         return line, count
 
-    def obfuscate_arc_files(self, flist):
-        for filename in flist:
-            self.log_debug(f"    pid={os.getpid()}: obfuscating {filename}")
-            try:
-                rel_name = os.path.relpath(filename, start=self.extracted_path)
-                if self.should_skip_file(rel_name):
-                    continue
-                if (not self.keep_binary_files and
-                        self.should_remove_file(rel_name)):
-                    # We reach this case if the option --keep-binary-files
-                    # was not used, and the file is in a list to be removed
+    def obfuscate_arc_file(self, filename):
+        self.log_debug(f"    pid={os.getpid()}: obfuscating {filename}")
+        try:
+            rel_name = os.path.relpath(filename, start=self.extracted_path)
+            if self.should_skip_file(rel_name):
+                return
+            if self.is_packed_dir_tarball(rel_name):
+                # tarballs produced by the report '--pack-dir' option hold
+                # collected data the user explicitly asked to retain. We can't
+                # obfuscate their contents in place, but unlike other binary
+                # files we must not drop them, or that collected data would be
+                # silently lost from the cleaned report.
+                self.log_warn(
+                    f"Keeping packed directory tarball '{rel_name}'; its "
+                    "contents are not obfuscated"
+                )
+                return
+            if (not self.keep_binary_files and
+                    self.should_remove_file(rel_name)):
+                # We reach this case if the option --keep-binary-files
+                # was not used, and the file is in a list to be removed
+                self.remove_file(rel_name)
+                return
+            if (self.keep_binary_files and
+                    (file_is_binary(filename) or
+                     self.should_remove_file(rel_name))):
+                # We reach this case if the option --keep-binary-files
+                # is used. In this case we want to make sure
+                # the cleaner doesn't try to clean a binary file
+                return
+            if os.path.islink(filename):
+                # don't run the obfuscation on the link, but on the actual
+                # file at some other point.
+                return
+            is_certificate = file_is_certificate(filename)
+            if is_certificate:
+                if is_certificate == "certificatekey":
+                    # Always remove certificate Key files
                     self.remove_file(rel_name)
-                    continue
-                if (self.keep_binary_files and
-                        (file_is_binary(filename) or
-                         self.should_remove_file(rel_name))):
-                    # We reach this case if the option --keep-binary-files
-                    # is used. In this case we want to make sure
-                    # the cleaner doesn't try to clean a binary file
-                    continue
-                if os.path.islink(filename):
-                    # don't run the obfuscation on the link, but on the actual
-                    # file at some other point.
-                    continue
-                is_certificate = file_is_certificate(filename)
-                if is_certificate:
-                    if is_certificate == "certificatekey":
-                        # Always remove certificate Key files
-                        self.remove_file(rel_name)
-                        continue
-                    if self.treat_certificates == "keep":
-                        continue
-                    if self.treat_certificates == "remove":
-                        self.remove_file(rel_name)
-                        continue
-                    if self.treat_certificates == "obfuscate":
-                        # since the original filename is deleted, we must
-                        # update both "filename" and "rel_name"
-                        filename = self.certificate_to_text(filename)
-                        rel_name = os.path.relpath(filename,
-                                                   start=self.extracted_path)
-                _parsers = [
-                    _p for _p in self.parsers if not
-                    any(
-                        _skip.match(rel_name) for _skip in _p.skip_patterns
-                    )
-                ]
-                if not _parsers:
-                    self.log_debug(
-                        f"Skipping obfuscation of {rel_name or filename} "
-                        f"due to matching file skip pattern"
-                    )
-                    continue
-                self.log_debug(f"Obfuscating {rel_name or filename}")
-                subs = 0
-                with tempfile.NamedTemporaryFile(mode='w', dir=self.tmpdir) \
-                        as tfile:
-                    with open(filename, 'r', encoding='utf-8',
-                              errors='replace') as fname:
-                        for line in fname:
-                            try:
-                                line, cnt = self.obfuscate_line(line, _parsers)
-                                subs += cnt
-                                tfile.write(line)
-                            except Exception as err:
-                                self.log_debug(f"Unable to obfuscate "
-                                               f"{rel_name}: {err}")
-                    tfile.seek(0)
-                    if subs:
-                        shutil.copyfile(tfile.name, filename)
-                        self.update_sub_count(subs)
+                    return
+                if self.treat_certificates == "keep":
+                    return
+                if self.treat_certificates == "remove":
+                    self.remove_file(rel_name)
+                    return
+                if self.treat_certificates == "obfuscate":
+                    # since the original filename is deleted, we must
+                    # update both "filename" and "rel_name"
+                    filename = self.certificate_to_text(filename)
+                    rel_name = os.path.relpath(filename,
+                                               start=self.extracted_path)
+            _parsers = [
+                _p for _p in self.parsers if not
+                any(
+                    _skip.match(rel_name) for _skip in _p.skip_patterns
+                )
+            ]
+            if not _parsers:
+                self.log_debug(
+                    f"Skipping obfuscation of {rel_name or filename} "
+                    f"due to matching file skip pattern"
+                )
+                return
+            self.log_debug(f"Obfuscating {rel_name or filename}")
+            subs = 0
+            with tempfile.NamedTemporaryFile(mode='w', dir=self.tmpdir) \
+                    as tfile:
+                with open(filename, 'r', encoding='utf-8',
+                          errors='replace') as fname:
+                    for line in fname:
+                        try:
+                            line, cnt = self.obfuscate_line(line, _parsers)
+                            subs += cnt
+                            tfile.write(line)
+                        except Exception as err:
+                            self.log_debug(f"Unable to obfuscate "
+                                           f"{rel_name}: {err}")
+                tfile.seek(0)
+                if subs:
+                    shutil.copyfile(tfile.name, filename)
+                    self.update_sub_count(subs)
 
-                self.obfuscate_filename(rel_name, filename)
+            self.obfuscate_filename(rel_name, filename)
 
-            except Exception as err:
-                self.log_debug(f"    pid={os.getpid()}: caught exception on "
-                               f"obfuscating file {filename}: {err}")
-
-        return (self.files_obfuscated_count, self.total_sub_count,
-                self.removed_file_count)
+        except Exception as err:
+            self.log_debug(f"    pid={os.getpid()}: caught exception on "
+                           f"obfuscating file {filename}: {err}")
 
     @classmethod
     def check_is_type(cls, arc_path):
@@ -284,6 +373,9 @@ class SoSObfuscationArchive():
 
     def log_info(self, msg, caller=None):
         self.soslog.info(self._fmt_log_msg(msg, caller))
+
+    def log_warn(self, msg, caller=None):
+        self.soslog.warning(self._fmt_log_msg(msg, caller))
 
     def log_error(self, msg, caller=None):
         self.soslog.error(self._fmt_log_msg(msg, caller))
@@ -403,6 +495,7 @@ class SoSObfuscationArchive():
                             os.chmod(fname, stat.S_IRUSR | stat.S_IWUSR)
                 except Exception as err:
                     self.log_debug(f"Error while trying to set perms: {err}")
+        self.packed_dirs = self._load_packed_dirs()
         self.log_debug(f"Extracted path is {self.extracted_path}")
 
     def rename_top_dir(self, new_name):
@@ -544,10 +637,16 @@ class SoSObfuscationArchive():
 
         if (not os.path.isfile(self.get_file_path(filename)) and not
                 os.path.islink(self.get_file_path(filename))):
+            self.log_debug(
+                f"{filename} isn't a file or link, skipping obfuscation."
+            )
             return True
 
         for _skip in self.skip_list:
             if filename.startswith(_skip) or re.match(_skip, filename):
+                self.log_debug(
+                    f"{filename} is in skip list, skipping obfuscation."
+                )
                 return True
         return False
 
@@ -584,5 +683,51 @@ class SoSObfuscationArchive():
             return file_is_binary(_full_path)
         # don't fail on dir-level symlinks
         return False
+
+    def _load_packed_dirs(self):
+        """Load the list of directories the report '--pack-dir' option packed
+        into tarballs, as recorded in the archive's manifest, and translate
+        each into the archive-relative path of its tarball (e.g. ``/proc/fs``
+        becomes ``proc/fs.tar``).
+
+        Archives without a manifest, or whose manifest predates the pack-dir
+        feature, yield an empty list, meaning no tarball is treated as
+        packed-dir output.
+
+        :returns:   Archive-relative paths of packed directory tarballs
+        :rtype:     ``list``
+        """
+        manifest = self.get_file_content('sos_reports/manifest.json')
+        if not manifest:
+            return []
+        try:
+            report_md = json.loads(manifest)['components']['report']
+            return [
+                f"{path.rstrip(os.sep).lstrip(os.sep)}.tar"
+                for path in report_md.get('packed_dirs', [])
+            ]
+        except Exception as err:
+            self.log_debug(f"Could not load packed_dirs from manifest: {err}")
+            return []
+
+    def is_packed_dir_tarball(self, rel_name):
+        """Determine if the file is a tarball produced by the report
+        '--pack-dir' option, which collapses a collected directory tree into a
+        single archive member (e.g. ``/proc/fs`` becomes ``proc/fs.tar``),
+        recording it in the manifest's ``packed_dirs`` list.
+
+        Such tarballs are binary and so would otherwise be removed by the
+        cleaner, but they hold collected data the user asked to retain, so the
+        caller keeps them in the archive instead. Tarballs not listed in the
+        manifest are ordinary collected files and are left to the normal
+        removal logic.
+
+        :param rel_name:    Path of the file relative to the archive root
+        :type rel_name:     ``str``
+
+        :returns:   ``True`` if the file is a packed directory tarball
+        :rtype:     ``bool``
+        """
+        return rel_name in self.packed_dirs
 
 # vim: set et ts=4 sw=4 :

@@ -11,11 +11,13 @@
 import hashlib
 import json
 import logging
+import re
 import os
 import shutil
 import fnmatch
+import multiprocessing
+import time
 
-from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pwd import getpwuid
 
@@ -35,12 +37,41 @@ from sos.cleaner.archives.sos import (SoSReportArchive, SoSReportDirectory,
 from sos.cleaner.archives.generic import DataDirArchive, TarballArchive
 from sos.cleaner.archives.insights import InsightsArchive
 from sos.utilities import (get_human_readable, import_module,
-                           ImporterHelper, is_executable)
+                           ImporterHelper, is_executable, ProgressBar)
 
 
 # an auxiliary method to kick off child processes over its instances
-def obfuscate_arc_files(arc, flist):
-    return arc.obfuscate_arc_files(flist)
+def _obfuscate_arc_files(arc, input_queue, output_queue, bytes_done=None):
+    try:
+        while True:
+            try:
+                item = input_queue.get()
+            except (EOFError, OSError) as e:
+                print(
+                    f"Child process exception when reading input "
+                    f"queue: '{e}'"
+                )
+                break
+            if item is None:  # Sentinel value to stop the process
+                try:
+                    output_queue.put((
+                        arc.files_obfuscated_count,
+                        arc.total_sub_count,
+                        arc.removed_file_count))
+                except OSError as e:
+                    print(
+                        f"Child process exception when writing to output "
+                        f"queue: '{e}'"
+                    )
+                break
+            file, size = item
+            arc.obfuscate_arc_file(file)
+            if bytes_done is not None:
+                with bytes_done.get_lock():
+                    bytes_done.value += size
+    except KeyboardInterrupt:
+        # catch user's interruption cleanly in the child process
+        pass
 
 
 class SoSCleaner(SoSComponent):
@@ -163,8 +194,9 @@ class SoSCleaner(SoSComponent):
                 if _parser.lower().strip() == parser_name:
                     self.log_info(f"Disabling parser: {parser_name}")
                     self.ui_log.warning(
-                        f"Disabling the '{_parser}' parser. Be aware that this"
-                        " may leave sensitive plain-text data in the archive."
+                        f"Disabling the '{_parser}' parser.\n"
+                        "Be aware that this may leave sensitive plain-text "
+                        "data in the archive."
                     )
                     parser_names.remove(pname)  # pylint: disable=W4701
                     found = True
@@ -224,9 +256,9 @@ class SoSCleaner(SoSComponent):
                             "directory")
         if not os.path.exists(self.opts.map_file):
             if self.opts.map_file != default_map:
-                self.log_error(
-                    f"ERROR: map file {self.opts.map_file} does not exist, "
-                    "will not load any obfuscation matches")
+                self.log_info(
+                    f"Default map file {self.opts.map_file} does not exist, "
+                    "will not\nload any obfuscation mapping.")
         else:
             with open(self.opts.map_file, 'r', encoding='utf-8') as mf:
                 try:
@@ -417,6 +449,19 @@ third party.
         for parser in self.parsers:
             if parser.name == 'Hostname Parser':
                 parser.mapping.set_initial_counts()
+
+        # Optimize single-archive cleaning: extract once before prepping
+        # instead of using tarfile.extractfile() for each file during prep,
+        # then extracting the full archive again during obfuscation.
+        # Multi-archive (sos-collect) keeps original prep-before-extract
+        # behavior for cross-archive obfuscation consistency.
+        single_tarball = (len(self.report_paths) == 1
+                          and self.report_paths[0].is_tarfile
+                          and not self.nested_archive)
+        if single_tarball:
+            self.log_debug("Single tarball detected, extracting before prep.")
+            self.report_paths[0].extract()
+
         self.preload_all_archives_into_maps()
         self.generate_parser_item_regexes()
         self.obfuscate_report_paths()
@@ -474,8 +519,10 @@ third party.
 
         self.ui_log.info(f"\tSize\t{get_human_readable(arcstat.st_size)}")
         self.ui_log.info(f"\tOwner\t{getpwuid(arcstat.st_uid).pw_name}\n")
-        self.ui_log.info("Please send the obfuscated archive to your support "
-                         "representative and keep the mapping file private")
+        self.ui_log.info(
+            "Please send the obfuscated archive to your support\n"
+            "representative and keep the mapping file private."
+        )
 
         self.cleanup()
         return None
@@ -602,33 +649,36 @@ third party.
             self.ui_log.info(msg)
             if self.opts.keep_binary_files:
                 self.ui_log.warning(
-                    "WARNING: binary files that potentially contain sensitive "
-                    "information will NOT be removed from the final archive\n"
+                    "WARNING: binary files that potentially contain "
+                    "sensitive information will NOT be\n"
+                    "removed from the final archive.\n"
                 )
             if (self.opts.treat_certificates == "obfuscate"
                     and not is_executable("openssl")):
                 self.opts.treat_certificates = "remove"
                 self.ui_log.warning(
-                    "WARNING: No `openssl` command available. Replacing "
+                    "WARNING: No `openssl` command available. Replacing\n"
                     "`--treat-certificates` from `obfuscate` to `remove`."
                 )
             if self.opts.treat_certificates == "obfuscate":
                 self.ui_log.warning(
                     "WARNING: certificate files that potentially contain "
-                    "sensitive information will\nbe CONVERTED to text and "
-                    "OBFUSCATED in the final archive.\n"
+                    "sensitive information will\n"
+                    "be CONVERTED to text and OBFUSCATED in the final "
+                    "archive.\n"
                 )
             elif self.opts.treat_certificates == "keep":
                 self.ui_log.warning(
                     "WARNING: certificate files that potentially contain "
-                    "sensitive information will\nbe KEPT in the final "
-                    "archive as is.\n"
+                    "sensitive information will\n"
+                    "be KEPT in the final archive as is.\n"
                 )
             elif self.opts.treat_certificates == "remove":
                 self.ui_log.warning(
                     "WARNING: certificate files that potentially contain "
-                    "sensitive information will\nbe REMOVED in the final "
-                    "archive.\n")
+                    "sensitive information will\n"
+                    "be REMOVED in the final archive.\n"
+                )
             for report_path in self.report_paths:
                 self.ui_log.info(f"Obfuscating {report_path.archive_path}")
                 self.obfuscate_report(report_path)
@@ -679,6 +729,7 @@ third party.
         :type prepper:  ``SoSPrepper`` subclass
         """
         for _parser in self.parsers:
+            _parser.mapping.initializing = True
             pname = _parser.name.lower().split()[0].strip()
             for _file in prepper.get_parser_file_list(pname, archive):
                 content = archive.get_file_content(_file)
@@ -702,6 +753,8 @@ third party.
 
             for ritem in prepper.regex_items[pname]:
                 _parser.mapping.add_regex_item(ritem)
+            _parser.mapping.initializing = False
+            _parser.mapping.generate_compiled_regexes()
         # we must initialize stuff inside (cloned processes') archive - REALLY?
         archive.set_parsers(self.parsers)
 
@@ -720,6 +773,46 @@ third party.
         for prepper in sorted(preps, key=lambda x: x.priority):
             yield prepper(options=self.opts)
 
+    def _prep_load_auditlogs(self):
+        """
+        # Pre-load all audit logs from archives to all applicable preppers.
+        """
+        self.log_debug("Pre-loading audit logs from all archives")
+        parsers_dict = {p.map_file_key.split('_')[0]: p for p in self.parsers}
+        parser_audits_map = []
+        for prepper in self.get_preppers():
+            if prepper.audit_logs_re and prepper.name in parsers_dict.keys():
+                parser_audits_map.append((
+                    prepper.audit_logs_re,
+                    prepper,
+                    parsers_dict[prepper.name]
+                ))
+        for archive in self.report_paths:
+            # archives are not yet extracted so we can't easily iterate over
+            # globbed files. So let assume logrotated files follow just the
+            # most typical scenario: audit.log -> audit.log.1 -> audit.log.2
+            # -> .. . And check just those files till they exist.
+            _file = 'var/log/audit/audit.log'
+            n = 0
+            while True:
+                content = archive.get_file_content(_file)
+                if not content:
+                    break
+                for line in content.splitlines():
+                    try:
+                        for reg, prepper, parser in parser_audits_map:
+                            matches = re.findall(reg, line)
+                            if matches:
+                                for item in matches:
+                                    if item not in prepper.skip_list:
+                                        parser.mapping.add(item)
+                    except Exception as err:
+                        self.log_debug(
+                            f"Failed to prep content from {_file}: {err}"
+                        )
+                n += 1
+                _file = f'var/log/audit/audit.log.{n}'
+
     def preload_all_archives_into_maps(self):
         """Before doing the actual obfuscation, if we have multiple archives
         to obfuscate then we need to preload each of them into the mappings
@@ -730,6 +823,7 @@ third party.
         for prepper in self.get_preppers():
             for archive in self.report_paths:
                 self._prepare_archive_with_prepper(archive, prepper)
+        self._prep_load_auditlogs()
         self.main_archive.set_parsers(self.parsers)
 
     def obfuscate_report(self, archive):  # pylint: disable=too-many-branches
@@ -741,6 +835,16 @@ third party.
             :param archive str:      Filepath to the directory or archive
         """
 
+        def _order_files_by_size(file_list, base_path):
+            """ Order files per their sizes, if they are provided relatively
+            to base_path. Returns list of (file, size) tuples, largest first.
+            """
+            files_with_sizes = [
+                (f, os.path.getsize(os.path.join(base_path, f)))
+                for f in file_list
+            ]
+            return sorted(files_with_sizes, key=lambda x: x[1], reverse=True)
+
         try:
             arc_md = self.cleaner_md.add_section(archive.archive_name)
             start_time = datetime.now()
@@ -750,39 +854,65 @@ third party.
                 archive.extract()
             archive.report_msg("Beginning obfuscation...")
 
-            file_list = list(archive.get_files())
-            # we can't call simple
-            # executor.map(archive.obfuscate_arc_files,archive.get_files())
-            # because a child process does not carry forward internal changes
-            # (e.g. mappings' datasets) from one call of obfuscate_arc_files
-            # method to another. Each obfuscate_arc_files method starts with
-            # vanilla parent archive, that is initialised *once* at its
-            # beginning via initializer=archive.load_parser_entries
-            # - but not afterwards..
-            #
-            # So we must pass list of all files for each worker at the
-            # beginning. This means less granularity of the child processes
-            # work (one worker can finish much sooner than the other), but
-            # it is the best we can have (or have found)
-            #
-            # At least, the "file_list[i::self.opts.jobs]" means subsequent
-            # files (speculativelly of similar size and content) are
-            # distributed to different processes, which attempts to split the
-            # load evenly. Yet better approach might be reorderig file_list
-            # based on files' sizes.
-
+            # we will spawn multiprocessing.Process instances that will get
+            # individual (file, size) pairs to obfuscate via `input_queue`.
+            # Once all pairs are sent there, `None` items are pushed to the
+            # queue as a sentinel mark. That triggers the child processes to
+            # report back
+            # to output_queue some stats, and finish.
             files_obfuscated_count = total_sub_count = removed_file_count = 0
-            archive_list = [archive for i in range(self.opts.jobs)]
-            with ProcessPoolExecutor(
-                    max_workers=self.opts.jobs,
-                    initializer=archive.load_parser_entries) as executor:
-                futures = executor.map(obfuscate_arc_files, archive_list,
-                                       [file_list[i::self.opts.jobs] for i in
-                                        range(self.opts.jobs)])
-                for (foc, tsc, rfc) in futures:
-                    files_obfuscated_count += foc
-                    total_sub_count += tsc
-                    removed_file_count += rfc
+            input_queue = multiprocessing.Queue()
+            output_queue = multiprocessing.Queue()
+            bytes_done = multiprocessing.Value('L', 0)
+
+            # Create and start processes
+            processes = []
+            for _ in range(self.opts.jobs):
+                p = multiprocessing.Process(
+                    target=_obfuscate_arc_files,
+                    args=(archive, input_queue, output_queue, bytes_done)
+                )
+                p.start()
+                processes.append(p)
+            # Distribute (file, size) pairs to the input queue, after
+            # reordering them by size. Since files can be both relative and
+            # absolute paths,
+            # depending on input tarball or directory, we must pass the
+            # relative base_path to call os.path.getsize properly
+            ordered_files = _order_files_by_size(
+                list(archive.get_files()),
+                os.path.dirname(os.path.abspath(archive.extracted_path))
+            )
+            total_bytes = sum(size for _, size in ordered_files)
+            for item in ordered_files:
+                input_queue.put(item)
+            # Stop processes by sending a sentinel value
+            for _ in range(self.opts.jobs):
+                input_queue.put(None)
+            # Display progress bar while child processes obfuscate files
+            if not self.opts.quiet and total_bytes > 0:
+                prefix = f"{archive.ui_name + ' :':<50} "
+                progress = ProgressBar(prefix, total_bytes,
+                                       format_fn=get_human_readable)
+                while bytes_done.value < total_bytes:
+                    progress.update(bytes_done.value)
+                    time.sleep(0.5)
+                progress.finish()
+            # Wait for all processes to finish
+            for p in processes:
+                p.join()
+            # Collect stats from the output queue
+            while not output_queue.empty():
+                try:
+                    (foc, tsc, rfc) = output_queue.get()
+                except OSError as e:
+                    self.log_info(
+                        f"Failed to receive obfuscation stats from child; "
+                        f"statistics might be incomplete. Error: '{e}'"
+                    )
+                files_obfuscated_count += foc
+                total_sub_count += tsc
+                removed_file_count += rfc
 
             # As there is no easy way to get dataset dicts from child
             # processes' mappings, we can reload our own parent-process
@@ -838,7 +968,7 @@ third party.
                              f"{archive.archive_name}: {err}")
 
     def obfuscate_file(self, filename):
-        self.main_archive.obfuscate_arc_files([filename])
+        self.main_archive.obfuscate_arc_file(filename)
 
     def obfuscate_symlinks(self, archive):
         """Iterate over symlinks in the archive and obfuscate their names.

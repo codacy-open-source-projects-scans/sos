@@ -92,6 +92,7 @@ class UploadTarget():
         'upload_s3_secret_key': None,
         'upload_s3_object_prefix': None,
         'upload_target': None,
+        'upload_threads': 4,
     }
 
     def __init__(self, parser=None, args=None, cmdline=None):
@@ -113,6 +114,18 @@ class UploadTarget():
 
     def get_target_id(self):
         return self.upload_target_id
+
+    def preauthorize(self):
+        """Pre-authorize this system and persist an auth token
+        locally without uploading anything.
+
+        Targets that use token-based (e.g. OIDC device-code)
+        auth should override this. The default is to declare
+        it unsupported.
+        """
+        raise NotImplementedError(
+            "This upload target does not support pre-authorization."
+        )
 
     @classmethod
     def name(cls):
@@ -273,7 +286,7 @@ class UploadTarget():
         :_upload_user:    Default username, if any else None
         :_upload_password: Default password, if any else None
 
-        The following Class Attrs may optionally be overidden by the Target
+        The following Class Attrs may optionally be overridden by the Target
 
         :_upload_directory:     Default FTP server directory, if any
 
@@ -456,7 +469,7 @@ class UploadTarget():
         upload password or one provided by the user
 
         A user provided password, either via option or the 'SOSUPLOADPASSWORD'
-        environment variable will have precendent over any target value
+        environment variable will have precedence over any target value
 
         :returns: The password to use for upload
         :rtype: ``str``

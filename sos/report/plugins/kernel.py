@@ -23,7 +23,7 @@ class Kernel(Plugin, IndependentPlugin):
     sos collection attempt to appear to 'hang'.
 
     The 'trace' option will enable the collection of the
-    /sys/kernel/debug/tracing/trace file specfically, but will not change the
+    /sys/kernel/debug/tracing/trace file specifically, but will not change the
     behavior stated above otherwise.
     """
 
@@ -55,7 +55,7 @@ class Kernel(Plugin, IndependentPlugin):
 
         try:
             modules = self.listdir(self.sys_module)
-            self.add_cmd_output("modinfo " + " ".join(modules),
+            self.add_cmd_output(f"modinfo {' '.join(modules)}",
                                 suggest_filename="modinfo_ALL_MODULES",
                                 tags='modinfo_all')
         except OSError:
@@ -123,6 +123,8 @@ class Kernel(Plugin, IndependentPlugin):
             "/etc/sysctl.conf",
             "/etc/sysctl.d",
             "/lib/sysctl.d",
+            "/run/sysctl.d",
+            "/usr/local/lib/sysctl.d",
             "/proc/cmdline",
             "/proc/driver",
             "/proc/sys/kernel/tainted",

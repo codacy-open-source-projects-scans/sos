@@ -265,7 +265,7 @@ class SoSCollector(SoSComponent):
         """Parses the given --nodes option(s) to properly format the regex
         list that we use. We cannot blindly split on ',' chars since it is a
         valid regex character, so we need to scan along the given strings and
-        check at each comma if we should use the preceeding string by itself
+        check at each comma if we should use the preceding string by itself
         or not, based on if there is a valid regex at that index.
         """
         if not self.opts.nodes:
@@ -363,9 +363,17 @@ class SoSCollector(SoSComponent):
             'Collector Options',
             'These options control how collect runs locally'
         )
-        collect_grp.add_argument('-b', '--become', action='store_true',
-                                 dest='become_root',
-                                 help='Become root on the remote nodes')
+        # These privilege escalation options are mutually exclusive
+        priv_grp = collect_grp.add_mutually_exclusive_group()
+        priv_grp.add_argument('-b', '--become', action='store_true',
+                              dest='become_root',
+                              help=('Become root on the remote nodes using '
+                                    'su. Do not use with --nopasswd-sudo'))
+        priv_grp.add_argument('--nopasswd-sudo', action='store_true',
+                              help=('Use passwordless sudo for privilege '
+                                    'escalation on nodes. Implied for '
+                                    'non-root SSH users. Do not use with '
+                                    '--become'))
         collect_grp.add_argument('--case-id', help='Specify case number')
         collect_grp.add_argument('--inherit-config-file', default=False,
                                  action='store_true',
@@ -414,8 +422,6 @@ class SoSCollector(SoSComponent):
                                  dest='primary', default='',
                                  help='Specify a primary node for cluster '
                                       'enumeration')
-        collect_grp.add_argument('--nopasswd-sudo', action='store_true',
-                                 help='Use passwordless sudo on nodes')
         collect_grp.add_argument('--nodes', action="append",
                                  help=('Provide a comma delimited list of '
                                        'nodes, or a regex to match against'))
@@ -603,7 +609,9 @@ class SoSCollector(SoSComponent):
                 try:
                     # there are no instances currently where any cluster option
                     # should contain a legitimate space.
-                    value = option.split('=')[1].split()[0]
+                    # however, some options like ocp.label or kubernetes.label
+                    # do contain equals
+                    value = '='.join(option.split('=')[1:]).split()[0]
                 except IndexError:
                     # conversion to boolean is handled during validation
                     value = 'True'
@@ -1097,8 +1105,10 @@ class SoSCollector(SoSComponent):
                 if re.match(regex, node):
                     return True
             except re.error as err:
-                msg = 'Error comparing %s to provided node regex %s: %s'
-                self.log_debug(msg % (node, regex, err))
+                self.log_debug(
+                    f'Error comparing {node} to provided '
+                    f'node regex {regex}: {err}'
+                )
         return False
 
     def get_nodes(self):
@@ -1302,8 +1312,10 @@ this utility or remote systems that it connects to.
             files = self.cluster._run_extra_cmd()
             if files:
                 self.primary.collect_extra_cmd(files)
-        msg = '\nSuccessfully captured %s of %s sos reports'
-        self.log_info(msg % (self.retrieved, self.report_num))
+        self.log_info(
+            f'\nSuccessfully captured {self.retrieved} of '
+            f'{self.report_num} sos reports'
+        )
         self.close_all_connections()
         if self.retrieved > 0:
             self.arc_name = self.create_cluster_archive()

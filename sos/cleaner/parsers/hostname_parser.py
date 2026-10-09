@@ -22,7 +22,7 @@ class SoSHostnameParser(SoSCleanerParser):
     )
 
     def __init__(self, config, workdir, skip_cleaning_files=[]):
-        self.mapping = SoSHostnameMap(workdir)
+        self.mapping = SoSHostnameMap(workdir, self.regex_pattern)
         super().__init__(config, skip_cleaning_files)
 
     def parse_line(self, line):
@@ -33,9 +33,6 @@ class SoSHostnameParser(SoSCleanerParser):
         _parse_line_with_compiled_regexes and _parse_line calls.
         """
         count = 0
-        for skip_pattern in self.skip_line_patterns:
-            if re.match(skip_pattern, line, re.I):
-                return line, count
         line, _count = self._parse_line(line)
         count += _count
         if self.compile_regexes:

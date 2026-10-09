@@ -38,13 +38,13 @@ class Landscape(Plugin, UbuntuPlugin):
                 "landscape-api get-distributions",
                 "landscape-api get-apt-sources",
                 "landscape-api get-repository-profiles",
-                "landscape-api get activites --limit 100",
+                "landscape-api get activities --limit 100",
             ])
             self.add_cmd_output([
                 "landscape-api --json get-distributions",
                 "landscape-api --json get-apt-sources",
                 "landscape-api --json get-repository-profiles",
-                "landscape-api --json get activites --limit 100",
+                "landscape-api --json get activities --limit 100",
             ])
 
         self.add_copy_spec([
@@ -53,7 +53,8 @@ class Landscape(Plugin, UbuntuPlugin):
             "/etc/landscape/client.conf",
             "/etc/landscape/service.conf",
             "/etc/landscape/service.conf.old",
-            "/var/lib/landscape/landscape-oops/*/OOPS-*"
+            "/var/lib/landscape/landscape-oops/*/OOPS-*",
+            "/var/lib/landscape/client/",
         ])
 
         if not self.get_option("all_logs"):
@@ -76,8 +77,8 @@ class Landscape(Plugin, UbuntuPlugin):
     def postproc(self):
         self.do_file_sub(
             "/etc/landscape/client.conf",
-            r"registration_password(.*)",
-            r"registration_password[********]"
+            r"(registration_key|registration_password) = (.*)",
+            r"\1 = [********]"
         )
         keys = [
             "password",

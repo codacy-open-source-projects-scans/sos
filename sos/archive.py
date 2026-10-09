@@ -17,6 +17,7 @@ import codecs
 import errno
 import stat
 import re
+from shlex import quote
 from datetime import datetime
 from threading import Lock
 
@@ -35,7 +36,7 @@ P_FILE = "file"
 P_LINK = "link"
 P_NODE = "node"
 P_DIR = "dir"
-P_CONTFILE = "contaner file"
+P_CONTFILE = "container file"
 
 
 class Archive:
@@ -359,7 +360,7 @@ class FileCacheArchive(Archive):
             if not dest:
                 return
 
-            # Handle adding a file from either a string respresenting
+            # Handle adding a file from either a string representing
             # a path, or a File object open for reading.
             if not getattr(src, "read", None):
                 # path case
@@ -391,7 +392,7 @@ class FileCacheArchive(Archive):
             src = dest
 
             # add_string() is a special case: it must always take precedence
-            # over any exixting content in the archive, since it is used by
+            # over any existing content in the archive, since it is used by
             # the Plugin postprocessing hooks to perform regex substitution
             # on file content.
             dest = self.check_path(dest, P_FILE, force=True)
@@ -602,6 +603,48 @@ class FileCacheArchive(Archive):
             replacements = 0
         return replacements
 
+    def tar_subdirs(self, paths):
+        """Replace one or more collected directories with a single tarball.
+
+        For each host path in ``paths`` that was collected into this archive,
+        the corresponding directory tree under the archive root is packed into
+        a single uncompressed tarball alongside it (e.g. ``proc/fs/`` becomes
+        ``proc/fs.tar``) and the original tree is removed. The rest of the
+        archive is left untouched.
+
+        The tarball is deliberately not compressed here: the final report
+        archive is compressed as a whole, so compressing again would only
+        duplicate that work and cannot shrink already-compressed data. The
+        point is to collapse a directory of many small files into one member,
+        so extracting the top-level archive does not have to recreate every
+        file on disk. This backs the report ``--pack-dir`` option, used
+        for verbose trees such as ``/proc/fs/``.
+
+        :param paths: Iterable of host directory paths to pack in place
+        :returns: A list of the host paths that were successfully packed
+        """
+        packed = []
+        for path in paths:
+            dest = self.dest_path(path.rstrip(os.sep))
+            if not os.path.isdir(dest):
+                self.log_info(f"skipping --pack-dir '{path}': not collected"
+                              " as a directory in the archive")
+                continue
+            tarpath = f"{dest}.tar"
+            try:
+                with tarfile.open(tarpath, mode="w") as tar:
+                    tar.add(dest, arcname=os.path.basename(dest))
+                shutil.rmtree(dest)
+                self.log_info(f"packed collected directory '{path}' into "
+                              f"'{tarpath}'")
+                packed.append(path)
+            except Exception as err:
+                self.log_error(f"Could not pack directory '{path}': {err}")
+                # leave the directory in place on failure
+                if os.path.exists(tarpath):
+                    os.unlink(tarpath)
+        return packed
+
     def finalize(self, method):
         self.log_info(f"finalizing archive '{self._archive_root}' using method"
                       f" '{method}'")
@@ -639,22 +682,24 @@ class FileCacheArchive(Archive):
         """
         arc_name = archive.replace("sosreport-", "secured-sosreport-")
         arc_name += ".gpg"
-        enc_cmd = f"gpg --batch -o {arc_name} "
-        env = None
+        enc_cmd = f"gpg --batch -o {quote(arc_name)} "
+        stdin = None
         if self.enc_opts["key"]:
             # need to assume a trusted key here to be able to encrypt the
             # archive non-interactively
-            enc_cmd += f"--trust-model always -e -r {self.enc_opts['key']} "
-            enc_cmd += archive
+            enc_cmd += ("--trust-model always -e -r "
+                        f"{quote(self.enc_opts['key'])} ")
+            enc_cmd += quote(archive)
         if self.enc_opts["password"]:
-            # prevent change of gpg options using a long password, but also
-            # prevent the addition of quote characters to the passphrase
-            passwd = self.enc_opts['password'].replace('\'"', '')
-            env = {"sos_gpg": passwd}
+            # hand the passphrase to gpg on its stdin: it must not go
+            # through a shell, where word splitting and globbing would
+            # rewrite it, nor through the environment, where it would be
+            # readable by other processes of the same user
             enc_cmd += "-c --passphrase-fd 0 "
-            enc_cmd = f"/bin/bash -c \"echo $sos_gpg | {enc_cmd}\""
-            enc_cmd += archive
-        r = sos_get_command_output(enc_cmd, timeout=0, env=env, stderr=True)
+            enc_cmd += quote(archive)
+            stdin = f"{self.enc_opts['password']}\n"
+        r = sos_get_command_output(enc_cmd, timeout=0, stdin=stdin,
+                                   stderr=True)
         if r["status"] == 0:
             return arc_name
         if r["status"] == 2:
@@ -737,7 +782,7 @@ class TarFileArchive(FileCacheArchive):
             self._archive_name = f"{self._archive_name}.{_comp_mode}"
             self._suffix += f".{_comp_mode}"
             _mode = f"w:{_comp_mode}"
-        # tarfile does not currently have a consistent way to define comnpress
+        # tarfile does not currently have a consistent way to define compress
         # level for both xz and gzip ('preset' for xz, 'compresslevel' for gz)
         kwargs = {
             None: {},

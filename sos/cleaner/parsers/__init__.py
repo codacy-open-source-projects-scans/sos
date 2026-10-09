@@ -16,7 +16,7 @@ import re
 class SoSCleanerParser():
     """Parsers are used to build objects that will take a line as input,
     parse it for a particular pattern (E.G. IP addresses) and then make any
-    necessary subtitutions by referencing the SoSMap() associated with the
+    necessary substitutions by referencing the SoSMap() associated with the
     parser.
 
     Ideally a new parser subclass will only need to set the class level attrs
@@ -43,7 +43,6 @@ class SoSCleanerParser():
 
     name = 'Undefined Parser'
     regex_pattern = re.compile(r'(?!)')  # match nothing
-    skip_line_patterns = []
     parser_skip_files = []  # list of skip files relevant to a parser
     skip_cleaning_files = []   # list of global skip files from cmdline args
     map_file_key = 'unset'
@@ -76,8 +75,11 @@ class SoSCleanerParser():
         """
         if not self.compile_regexes:
             return
+        self.mapping.initializing = True
         for obitem in self.mapping.dataset:
             self.mapping.add_regex_item(obitem)
+        self.mapping.initializing = False
+        self.mapping.generate_compiled_regexes()
 
     def parse_line(self, line):
         """This will be called for every line in every file we process, so that
@@ -89,9 +91,6 @@ class SoSCleanerParser():
         line again looking for new matches.
         """
         count = 0
-        for skip_pattern in self.skip_line_patterns:
-            if re.match(skip_pattern, line, re.I):
-                return line, count
         if self.compile_regexes:
             line, _rcount = self._parse_line_with_compiled_regexes(line)
             count += _rcount
@@ -110,14 +109,16 @@ class SoSCleanerParser():
         :rtype:     ``str``, ``int``
         """
         count = 0
-        if self.mapping.compiled_search.search(line):
-            for item, reg in self.mapping.compiled_regexes:
-                if reg.search(line):
-                    line, _count = reg.subn(self.mapping.get(item), line)
-                    count += _count
-                    # break the cycle if no further search can apply
-                    if not self.mapping.compiled_search.search(line):
-                        break
+        for item, reg in self.mapping.get_matched_items(line):
+            if self.mapping.use_token_lookup or reg.search(line):
+                line, _count = reg.subn(self.mapping.get(item), line)
+                count += _count
+                # break the cycle if no further search can apply;
+                # token-lookup parsers don't maintain compiled_search so
+                # we rely on get_matched_items() exhausting its results
+                if not self.mapping.use_token_lookup and \
+                        not self.mapping.compiled_search.search(line):
+                    break
         return line, count
 
     def _parse_line(self, line):
@@ -159,8 +160,8 @@ class SoSCleanerParser():
         :rtype: ``str``
         """
         if self.compile_regexes:
-            for item, reg in self.mapping.compiled_regexes:
-                if reg.search(string_data):
+            for item, reg in self.mapping.get_matched_items(string_data):
+                if self.mapping.use_token_lookup or reg.search(string_data):
                     string_data = reg.sub(self.mapping.get(item), string_data)
         else:
             for k, ob in sorted(self.mapping.dataset.items(), reverse=True,

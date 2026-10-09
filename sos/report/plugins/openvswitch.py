@@ -18,6 +18,15 @@ class OpenVSwitch(Plugin):
     short_desc = 'OpenVSwitch networking'
     plugin_name = "openvswitch"
     profiles = ('network', 'virt')
+
+    services = (
+        'openvswitch',
+        'openvswitch-nonetwork',
+        'ovs-vswitchd',
+        'ovsdb-server',
+        'ovs-configuration',
+        'openvswitch-ipsec',
+    )
     actl = "ovs-appctl"
     vctl = "ovs-vsctl"
     ofctl = "ovs-ofctl"
@@ -160,13 +169,6 @@ class OpenVSwitch(Plugin):
         self.add_cmd_output(f"{self.vctl} -t 5 show",
                             tags="ovs_vsctl_show")
 
-        # Gather systemd services logs
-        self.add_journal(units="openvswitch")
-        self.add_journal(units="openvswitch-nonetwork")
-        self.add_journal(units="ovs-vswitchd")
-        self.add_journal(units="ovsdb-server")
-        self.add_journal(units="ovs-configuration")
-        self.add_journal(units="openvswitch-ipsec")
         self.collect_ovs_info()
         self.collect_datapath()
         self.collect_ovs_bridge_info()
@@ -361,7 +363,7 @@ class OpenVSwitch(Plugin):
                 br_protos_ln = line[line.find("[")+1:line.find("]")]
                 br_protos = br_protos_ln.replace('"', '').split(", ")
 
-        # If 'list bridge' yeilded no protocols, use the range of
+        # If 'list bridge' yielded no protocols, use the range of
         # protocols enabled by default on this version of ovs.
         if br_protos == [''] and ofp_ver_result['output']:
             ofp_version_range = ofp_ver_result['output'].splitlines()

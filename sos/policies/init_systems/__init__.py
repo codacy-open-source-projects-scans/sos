@@ -101,7 +101,7 @@ class InitSystem():
         # This is going to be primarily used in gating if service related
         # commands are going to be run or not. Default to always returning
         # True when an actual init system is not specified by policy so that
-        # we don't inadvertantly restrict sos reports on those systems
+        # we don't inadvertently restrict sos reports on those systems
         return default
 
     def load_all_services(self):
@@ -130,7 +130,7 @@ class InitSystem():
         """Parses the output returned by the query command to make a
         determination of what the state of the service is
 
-        This should be overriden by anything that subclasses InitSystem
+        This should be overridden by anything that subclasses InitSystem
 
         :param output: The raw output from querying the service with the
                        configured `query_cmd`

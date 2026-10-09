@@ -19,6 +19,8 @@ sos_upload \- Upload files like previously generated sos reports or logs to a po
           [--upload-s3-access-key key]\fR
           [--upload-s3-secret-key key]\fR
           [--upload-s3-object-prefix prefix]\fR
+          [--preauth]\fR
+          [--upload-threads threads]\fR
 
 .PP
 .SH DESCRIPTION
@@ -113,28 +115,54 @@ If this option is not called, sos will try to determine the local target
 and use it for uploads.
 
 .TP
+.B \--upload-s3-endpoint ENDPOINT
+.B \--upload-threads THREADS
+Number of threads to use for multipart uploads (1\-16, default: 4).
+When an archive exceeds a certain size, defined in the targets, it is
+uploaded in parallel chunks using this many threads. Higher values
+speed up the upload but consume more bandwidth and memory, as each
+thread holds a 128 MiB chunk in memory.
+
+.TP
 .B \---upload-s3-endpoint ENDPOINT
 Endpoint to upload to for S3 bucket
 
 .TP
-.B \---upload-s3-region REGION
+.B \--upload-s3-region REGION
 Region to upload to for S3 bucket
 
 .TP
-.B \---upload-s3-bucket BUCKET
+.B \--upload-s3-bucket BUCKET
 Name of the S3 bucket to upload to
 
 .TP
-.B \---upload-s3-access-key KEY
+.B \--upload-s3-access-key KEY
 Access key for the S3 bucket
 
 .TP
-.B \-  --upload-s3-secret-key KEY
+.B \--upload-s3-secret-key KEY
 Secret key for the S3 bucket
 
 .TP
-.B \-  --upload-s3-object-prefix PREFIX
+.B \--upload-s3-object-prefix PREFIX
 Prefix for the S3 object/key
+
+.TP
+.B \-\-preauth
+Pre-authorize this system by running the authentication flow and storing
+the resulting token locally (see \fBTOKEN STORAGE\fR), without uploading a
+file. Useful to prepare a system for later, unattended uploads. Only
+supported for upload targets that use token-based authentication.
+
+.SH TOKEN STORAGE
+When using web-based authentication for uploads, \fBsos\fR stores the
+refresh token locally in the file \fI~/.sos-oidc-token.json\fR so that
+subsequent uploads do not require re-authenticating through a browser.
+.PP
+\fBNote:\fR the token is stored in \fBplain text\fR with file permissions
+set to 0600 (owner read/write only).  If these permissions are changed,
+sos will issue a warning.  Users should ensure that the storage location
+and its parent directories have appropriately restrictive permissions.
 
 .SH SEE ALSO
 .BR sos (1)

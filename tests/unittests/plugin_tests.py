@@ -289,6 +289,44 @@ class PluginTests(unittest.TestCase):
         self.mp._do_copy_path("not_here_tests")
         self.assertEqual(self.mp.archive.m, {})
 
+    def test_copy_relative_symlink_from_symlinked_parent(self):
+        tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmpdir)
+
+        sysdir = os.path.join(tmpdir, "sys")
+        real_parent = os.path.join(
+            sysdir, "bus", "cpu", "drivers", "processor"
+        )
+        os.makedirs(real_parent)
+
+        target = os.path.join(sysdir, "devices", "system", "cpu", "cpu0")
+        os.makedirs(os.path.dirname(target))
+        with open(target, "w", encoding="utf-8") as target_file:
+            target_file.write("cpu0\n")
+
+        visible_cpu = os.path.join(
+            sysdir, "devices", "system", "cpu", "cpu3"
+        )
+        os.makedirs(visible_cpu)
+        os.symlink("../../../../bus/cpu",
+                   os.path.join(visible_cpu, "subsystem"))
+        os.symlink("../../../../devices/system/cpu/cpu0",
+                   os.path.join(real_parent, "cpu0"))
+
+        visible_link = os.path.join(
+            visible_cpu, "subsystem", "drivers", "processor", "cpu0"
+        )
+        bad_target = os.path.normpath(os.path.join(
+            os.path.dirname(visible_link),
+            "../../../../devices/system/cpu/cpu0"
+        ))
+
+        self.mp.sysroot = "/"
+        self.mp._do_copy_path(visible_link)
+
+        self.assertIn(target, self.mp.archive.m)
+        self.assertNotIn(bad_target, self.mp.archive.m)
+
     def test_copy_dir_forbidden_path(self):
         p = ForbiddenMockPlugin({
             'cmdlineopts': MockOptions(),
@@ -408,6 +446,33 @@ class AddCopySpecTests(unittest.TestCase):
             'tests/unittests/test.txt',
         ], 1)
         self.assertEqual(len(self.mp.copy_paths), 2)
+
+    def _make_sibling_dirs(self, tmpdir):
+        files = set()
+        for name in ('a', 'b', 'c', 'd'):
+            os.mkdir(os.path.join(tmpdir, name))
+            fname = os.path.join(tmpdir, name, 'file')
+            with open(fname, 'w', encoding='utf-8') as f:
+                f.write(name)
+            files.add(fname)
+        return files
+
+    def test_dir_with_sibling_subdirs_expanded(self):
+        self.mp.sysroot = '/'
+        tmpdir = tempfile.mkdtemp()
+        files = self._make_sibling_dirs(tmpdir)
+        self.mp.add_copy_spec(tmpdir)
+        self.assertEqual(self.mp.copy_paths, files)
+        shutil.rmtree(tmpdir)
+
+    def test_dir_with_sibling_subdirs_skip_files(self):
+        self.mp.sysroot = '/'
+        tmpdir = tempfile.mkdtemp()
+        self._make_sibling_dirs(tmpdir)
+        self.mp.skip_files = [os.path.join(tmpdir, '*', 'file')]
+        self.mp.add_copy_spec(tmpdir)
+        self.assertEqual(self.mp.copy_paths, set())
+        shutil.rmtree(tmpdir)
 
 
 class CheckEnabledTests(unittest.TestCase):

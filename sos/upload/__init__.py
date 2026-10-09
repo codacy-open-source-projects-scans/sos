@@ -47,7 +47,9 @@ class SoSUpload(SoSComponent):
         'upload_s3_access_key': None,
         'upload_s3_secret_key': None,
         'upload_s3_object_prefix': None,
-        'upload_target': None
+        'upload_target': None,
+        'preauth': False,
+        'upload_threads': 4
     }
 
     def __init__(self, parser=None, args=None, cmdline=None, in_place=False,
@@ -81,8 +83,14 @@ class SoSUpload(SoSComponent):
             'Upload Options',
             'These options control how upload manages files'
             )
-        upload_grp.add_argument("upload_file", metavar="FILE",
+        upload_grp.add_argument("upload_file", metavar="FILE", nargs='?',
                                 help="The file or archive to upload")
+        upload_grp.add_argument("--preauth", default=False,
+                                action='store_true',
+                                help="Pre-authorize this system and store an"
+                                " auth token locally without uploading a"
+                                " file. Only supported for targets that"
+                                " use token-based authentication.")
         upload_grp.add_argument("--case-id", action="store", dest="case_id",
                                 help="specify case identifier")
         upload_grp.add_argument("--upload-url", default=None,
@@ -126,6 +134,18 @@ class SoSUpload(SoSComponent):
                                       "options are:\n"
                                       "redhat, canonical, "
                                       "generic, local"))
+        upload_grp.add_argument("--upload-threads", default=4, type=int,
+                                choices=range(1, 17),
+                                metavar="THREADS",
+                                help=("Number of threads for multipart "
+                                      "uploads. When an archive exceeds "
+                                      "a certain size, defined in the "
+                                      "targets, it is uploaded in "
+                                      "parallel chunks using this many "
+                                      "threads (1-16, default: 4). "
+                                      "Each thread holds a 128 MiB chunk "
+                                      "in memory, e.g. 4 threads use "
+                                      "~512 MiB"))
 
     @classmethod
     def display_help(cls, section):
@@ -274,9 +294,14 @@ this utility.
     def execute(self):
         try:
             self.pre_work()
-            if self.from_cmdline:
+            if self.from_cmdline and not self.opts.preauth:
                 self.intro()
                 self.archive = self.opts.upload_file
+                if not self.archive:
+                    self.ui_log.error(
+                        _("No FILE provided to upload. Provide a FILE, or"
+                          " use --preauth to only store an auth token."))
+                    sys.exit(1)
                 self.caseid = self.policy.prompt_for_case_id(
                     cmdline_opts=self.opts
                 )
@@ -295,6 +320,23 @@ this utility.
                     "Exiting."
                 )
                 sys.exit(1)
+            if self.from_cmdline and self.opts.preauth:
+                try:
+                    self.upload_target.preauthorize()
+                    self.ui_log.info(
+                        _("System pre-authorized successfully; auth token "
+                          "stored locally.")
+                    )
+                    sys.exit(0)
+                except NotImplementedError:
+                    self.ui_log.error(_(
+                        "The selected upload target "
+                        f"'{self.upload_target.name()}' does not support"
+                        " --preauth."))
+                    sys.exit(1)
+                except Exception as err:
+                    self.ui_log.error(_(f"Pre-authorization failed: {err}"))
+                    sys.exit(1)
             self.upload_target.pre_work(self.get_commons())
             try:
                 if os.stat(self.archive).st_size > 0:
